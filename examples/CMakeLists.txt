@@ -1,0 +1,1 @@
+add_subdirectory(example_win32_direct2d)

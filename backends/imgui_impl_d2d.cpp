@@ -10,6 +10,7 @@
 
 // CHANGELOG
 //  2023-10-20: Initial version.
+//  2023-11-29: Rendering triangles
 
 #include "imgui.h"
 #ifndef IMGUI_DISABLE
@@ -41,62 +42,204 @@ struct ImGui_ImplD2D_ComPtr
         Release();
     }
 };
+
+struct ImGui_ImplD2D_Fonts {
+
+};
+
 struct ImGui_ImplD2D_Data
 {
     ID2D1Factory* Factory;
     ID2D1RenderTarget* RenderTarget;
+    ImGui_ImplD2D_Fonts* Fonts;
     ImGui_ImplD2D_ComPtr<ID2D1SolidColorBrush> SolidColorBrush;
     ImGui_ImplD2D_ComPtr<ID2D1StrokeStyle> StrokeStyle;
     D2D1_GRADIENT_STOP GradientStops[2];
-    ImGui_ImplD2D_ComPtr<IDWriteFactory5> WriteFactory;
+    IDWriteFactory5* WriteFactory;
     ImGui_ImplD2D_Data() { memset((void*)this, 0, sizeof(*this)); }
 };
 
-#if 0 
-inline static D2D1_COLOR_F toColor(ImU32 col) {
-
-    float a = (col >> 24 & 0xFFu) / 255.0f;
-    float b = ((col >> 16) & 0xFFu) / 255.0f;
-    float g = ((col >> 8) & 0xFFu) / 255.0f;
-    float r = ((col >> 0) & 0xFFu) / 255.0f;
-    D2D1_COLOR_F color{ r, g, b, a };
-    return color;
+inline static ImGui_ImplD2D_Data* ImGui_ImplD2D_GetBackendData()
+{
+    return ImGui::GetCurrentContext() ? (ImGui_ImplD2D_Data*)ImGui::GetIO().BackendRendererUserData : nullptr;
 }
 
-void ImGui_ImplD2D_GradientBrush(ImGui_ImplD2D_ComPtr<ID2D1RadialGradientBrush>& brush, ID2D1RenderTarget* RendererTarget, ImGui_ImplD2D_Data* bd, ImVec2 aPos, ImVec2 bPos, ImU32 aCol, ImU32 bCol) {
-    brush.Release();
-    ImGui_ImplD2D_ComoPtr<ID2D1GradientStopCollection> stops;
-    D2D1_RADIAL_GRADIENT_BRUSH_PROPERTIES props =
-        D2D1::RadialGradientBrushProperties(
-            D2D1::Point2F(aPos.x, aPos.y),
-            D2D1::Point2F(0, 0),
-            abs(aPos.x - bPos.x), abs(aPos.y - bPos.y));
-    bd->GradientStops[0].position = 0;
-    bd->GradientStops[1].position = 1;
-    bd->GradientStops[0].color = toColor(aCol);
-    bd->GradientStops[1].color = toColor(bCol);
-    bd->GradientStopCollection->Release();
-    stops->Pointer
-    RendererTarget->CreateGradientStopCollection(bd->GradientStops, 2U, &bd->GradientStopCollection);
-    RendererTarget->CreateRadialGradientBrush(props, bd->GradientStopCollection, gradientBrush);
-}
-void CreateGradientBrush(ID2D1LinearGradientBrush** gradientBrush, ID2D1RenderTarget* RendererTarget, ImGui_ImplDirect2DRenderer2_Data* bd, ImVec2 aPos, ImVec2 bPos, ImU32 aCol, ImU32 bCol) {
-    if (*gradientBrush) {
-        (*gradientBrush)->Release();
-        (*gradientBrush) = nullptr;
+bool     ImGui_ImplD2D_Init(ID2D1RenderTarget* rendererTarget, IDWriteFactory* writeFactory) {
+    ImGuiIO& io = ImGui::GetIO();
+    IM_ASSERT(io.BackendRendererUserData == nullptr && "Already initialized a renderer backend!");
+    IM_ASSERT(rendererTarget != nullptr && "Direct2D renderer target not initialized!");
+    IM_ASSERT(writeFactory != nullptr && "DirectWrite factory not initialized!");
+
+    // Setup backend capabilities flags
+    ImGui_ImplD2D_Data* bd = IM_NEW(ImGui_ImplD2D_Data)();
+    io.BackendRendererUserData = (void*)bd;
+    io.BackendRendererName = "imgui_impl_d2d";
+    io.BackendFlags |= ImGuiBackendFlags_RendererHasVtxOffset;  // We can honor the ImDrawCmd::VtxOffset field, allowing for large meshes.
+
+    bd->GradientStops[0U].position = 0.f;
+    bd->GradientStops[1U].position = 1.f;
+    HRESULT hr = S_OK;
+    bool success = SUCCEEDED(hr);
+    rendererTarget->GetFactory(&bd->Factory);
+    if (success) {
+        success = ImGui_ImplD2D_CreateDeviceObjects(rendererTarget);
     }
-    auto props = D2D1::LinearGradientBrushProperties(D2D1::Point2F(aPos.x, aPos.y),
-        D2D1::Point2F(bPos.x, bPos.y));
-    bd->GradientStops[0].position = 0;
-    bd->GradientStops[1].position = 1;
-    bd->GradientStops[0].color = toColor(aCol);
-    bd->GradientStops[1].color = toColor(bCol);
-    bd->GradientStopCollection->Release();
-    RendererTarget->CreateGradientStopCollection(bd->GradientStops, 2U, &bd->GradientStopCollection);
-    RendererTarget->CreateLinearGradientBrush(props, bd->GradientStopCollection, gradientBrush);
+    if (success) {
+        success = io.Fonts->Build();
+    }
+    if (success) {
+
+        if (io.Fonts->TexID == 0) {
+            io.Fonts->SetTexID((ImTextureID)(intptr_t)1);
+        }
+    }
+    if (success) {
+        D2D1_STROKE_STYLE_PROPERTIES props = D2D1::StrokeStyleProperties();
+        props.miterLimit = 0;
+        props.lineJoin = D2D1_LINE_JOIN_ROUND;
+        hr = bd->Factory->CreateStrokeStyle(props, NULL, 0U, &bd->StrokeStyle.Pointer);
+        success = SUCCEEDED(hr);
+    }
+    if (success) {
+        hr = writeFactory->QueryInterface(__uuidof(IDWriteFactory5), (void**)&bd->WriteFactory);
+        success = SUCCEEDED(hr);
+    }
+    if (success) {
+        return true;
+    }
+    return false;
 }
 
-static int ImGui_ImplD2D_IsGlyph(ID2D1RenderTarget* RendererTarget, ImGui_ImplDirect2DRenderer2_Data* bd, const ImGuiIO& io, const ImDrawCmd* pcmd, const ImDrawVert* vert, const ImDrawIdx* idx, const int offset = 0) {
+bool ImGui_ImplD2D_CreateDeviceObjects(ID2D1RenderTarget* renderTarget) {
+    ImGui_ImplD2D_Data* bd = ImGui_ImplD2D_GetBackendData();
+    if (renderTarget == nullptr) {
+        renderTarget = bd->RenderTarget;
+    }
+    IM_ASSERT(renderTarget != nullptr && "Render target must be initialized");
+
+    HRESULT hr = S_OK;
+    if (renderTarget != bd->RenderTarget) {
+        ImGui_ImplD2D_DestroyDeviceObjects();
+        bd->RenderTarget = renderTarget;
+        // those this increase reference count?
+        renderTarget->GetFactory(&bd->Factory);
+        if (FAILED(hr)) {
+            return false;
+        }
+        hr = renderTarget->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::Black), &bd->SolidColorBrush.Pointer);
+        if (FAILED(hr)) {
+            return false;
+        }
+    }
+    return ImGui_ImplD2D_CreateFontsTexture();
+}
+
+void    ImGui_ImplD2D_DestroyDeviceObjects()
+{
+    ImGui_ImplD2D_Data* bd = ImGui_ImplD2D_GetBackendData();
+    bd->SolidColorBrush.Release();
+    bd->StrokeStyle.Release();
+
+    ImGui_ImplD2D_DestroyFontsTexture();
+}
+
+bool    ImGui_ImplD2D_CreateFontsTexture() {
+    ImGui_ImplD2D_Data* bd = ImGui_ImplD2D_GetBackendData();
+    ImGuiIO& io = ImGui::GetIO();
+    return true;
+}
+
+void    ImGui_ImplD2D_DestroyFontsTexture()
+{
+    ImGui_ImplD2D_Data* bd = ImGui_ImplD2D_GetBackendData();
+    ImGuiIO& io = ImGui::GetIO();
+
+    if (bd->Fonts) {
+        ///  io.Fonts->SetTexID(0);
+
+    }
+}
+
+void     ImGui_ImplD2D_Shutdown() {
+    ImGui_ImplD2D_Data* bd = ImGui_ImplD2D_GetBackendData();
+    IM_ASSERT(bd != nullptr && "No renderer backend to shutdown, or already shutdown?");
+    ImGuiIO& io = ImGui::GetIO();
+
+    ImGui_ImplD2D_DestroyDeviceObjects();
+
+    io.BackendRendererName = nullptr;
+    io.BackendRendererUserData = nullptr;
+    io.BackendFlags &= ~ImGuiBackendFlags_RendererHasVtxOffset;
+    IM_DELETE(bd);
+}
+
+void     ImGui_ImplD2D_NewFrame() {
+    ImGui_ImplD2D_Data* bd = ImGui_ImplD2D_GetBackendData();
+    IM_ASSERT(bd != nullptr && "Did you call ImGui_ImplD2D_Init()?");
+    // auto detect new fonts if required
+    ImGui_ImplD2D_CreateFontsTexture();
+}
+
+inline static D2D1_COLOR_F ImGui_ImplD2D_Color(ImU32 color) {
+    constexpr float norm = 1.0f / 255.0f;
+    const float a = (color >> 24 & 0xFFu) * norm;
+    const float b = ((color >> 16) & 0xFFu) * norm;
+    const float g = ((color >> 8) & 0xFFu) * norm;
+    const float r = ((color >> 0) & 0xFFu) * norm;
+    return D2D1_COLOR_F{ r, g, b, a };
+}
+
+inline static D2D1_POINT_2F ImGui_ImplD2D_Point(const ImVec2& point) {
+    return D2D1_POINT_2F{ point.x, point.y };
+}
+
+static bool ImGui_ImplD2D_CreateBrush(
+    ImGui_ImplD2D_ComPtr<ID2D1RadialGradientBrush>& brush,
+    D2D1_GRADIENT_STOP(&stops)[2U],
+    ImGui_ImplD2D_ComPtr<ID2D1GradientStopCollection>& stopCollection,
+    D2D1_RADIAL_GRADIENT_BRUSH_PROPERTIES& props,
+    ID2D1RenderTarget* renderTarget,
+    ImVec2 aPos, ImVec2 bPos, ImU32 aCol, ImU32 bCol) {
+    props.center = ImGui_ImplD2D_Point(aPos);
+    props.gradientOriginOffset = D2D1_POINT_2F{ 0, 0 };
+    props.radiusX = abs(aPos.x - bPos.x);
+    props.radiusY = abs(aPos.y - bPos.y);
+    stops[0U].color = ImGui_ImplD2D_Color(aCol);
+    stops[1U].color = ImGui_ImplD2D_Color(bCol);
+    stopCollection.Release();
+    brush.Release();
+    HRESULT hr = renderTarget->CreateGradientStopCollection(stops, 2U, &stopCollection.Pointer);
+    if (SUCCEEDED(hr))
+    {
+        hr = renderTarget->CreateRadialGradientBrush(props, stopCollection.Pointer, &brush.Pointer);
+    }
+    return SUCCEEDED(hr);
+}
+
+static bool ImGui_ImplD2D_CreateBrush(
+    ImGui_ImplD2D_ComPtr<ID2D1LinearGradientBrush>& brush,
+    D2D1_GRADIENT_STOP(&stops)[2U],
+    ImGui_ImplD2D_ComPtr<ID2D1GradientStopCollection>& stopCollection,
+    D2D1_LINEAR_GRADIENT_BRUSH_PROPERTIES& props,
+    ID2D1RenderTarget* renderTarget,
+    ImVec2 aPos, ImVec2 bPos, ImU32 aCol, ImU32 bCol
+) {
+    props.startPoint = ImGui_ImplD2D_Point(aPos);
+    props.endPoint = ImGui_ImplD2D_Point(bPos);
+    stops[0U].color = ImGui_ImplD2D_Color(aCol);
+    stops[1U].color = ImGui_ImplD2D_Color(bCol);
+    stopCollection.Release();
+    brush.Release();
+    HRESULT hr = renderTarget->CreateGradientStopCollection(stops, 2U, &stopCollection.Pointer);
+    if (SUCCEEDED(hr)) {
+        hr = renderTarget->CreateLinearGradientBrush(props, stopCollection.Pointer, &brush.Pointer);
+    }
+    return SUCCEEDED(hr);
+}
+
+#if 1
+#include <vector>
+static int ImGui_ImplD2D_IsGlyph(ID2D1RenderTarget* RendererTarget, ImGui_ImplD2D_Data* bd, const ImGuiIO& io, const ImDrawCmd* pcmd, const ImDrawVert* vert, const ImDrawIdx* idx, const int offset = 0) {
     ImTextureID texture = pcmd->GetTexID();
     if (texture != io.Fonts->TexID) {
         return 0;
@@ -199,13 +342,16 @@ static int ImGui_ImplD2D_IsGlyph(ID2D1RenderTarget* RendererTarget, ImGui_ImplDi
         }
         if (SUCCEEDED(hr)) {
             const D2D1_SIZE_U renderTargetSize = RendererTarget->GetPixelSize();
-            bd->SolidColorBrush->SetColor(toColor(v0->col));
-            RendererTarget->SetTransform(D2D1::Matrix3x2F::Identity());
+            bd->SolidColorBrush.Pointer->SetColor(ImGui_ImplD2D_Color(v0->col));
+            bd->RenderTarget->SetTransform(D2D1::Matrix3x2F::Identity());
             for (size_t c = 0; c < codepointRun.size() - 1; c++) {
                 ImVec2 pos = codepointPos[c];
-                RendererTarget->DrawText(codepointRun.data() + c, 1, textFormat,
+#if UNICODE
+                bd->RenderTarget->DrawText(codepointRun.data() + c, 1, textFormat,
                     D2D1::RectF(pos.x, pos.y, renderTargetSize.width, renderTargetSize.height),
                     bd->SolidColorBrush);
+#else
+#endif 
             }
         }
         if (textFormat != NULL) {
@@ -216,81 +362,8 @@ static int ImGui_ImplD2D_IsGlyph(ID2D1RenderTarget* RendererTarget, ImGui_ImplDi
     return glyphRun.size() * countPerLetter;
 }
 
-static ImGui_ImplDirect2DRenderer2_Data* ImGui_ImplDirect2D_GetBackendData()
-{
-    return ImGui::GetCurrentContext() ? (ImGui_ImplDirect2DRenderer2_Data*)ImGui::GetIO().BackendRendererUserData : nullptr;
-}
+#endif // 1
 
-bool     ImGui_ImplDirect2D_Init(ID2D1RenderTarget* renderer, ID2D1RenderTarget* image) {
-    ImGuiIO& io = ImGui::GetIO();
-    IM_ASSERT(io.BackendRendererUserData == nullptr && "Already initialized a renderer backend!");
-    IM_ASSERT(renderer != nullptr && "Direct2D renderer not initialized!");
-
-    // Setup backend capabilities flags
-    ImGui_ImplDirect2DRenderer2_Data* bd = IM_NEW(ImGui_ImplDirect2DRenderer2_Data)();
-    io.BackendRendererUserData = (void*)bd;
-    io.BackendRendererName = "imgui_impl_sdlrenderer2";
-    io.BackendFlags |= ImGuiBackendFlags_RendererHasVtxOffset;  // We can honor the ImDrawCmd::VtxOffset field, allowing for large meshes.
-
-    ImGui::GetStyle().ScaleAllSizes(1);
-
-    renderer->GetFactory(&bd->Factory);
-    bd->RendererTarget = renderer;
-    bd->ImageRenderTarget = image;
-    ImGui_ImplDirect2D_CreateDeviceObjects(NULL);
-    io.Fonts->Build();
-    if (io.Fonts->TexID == 0) {
-
-        io.Fonts->SetTexID((ImTextureID)(intptr_t)1);
-    }
-    HRESULT hr = S_OK;
-    if (SUCCEEDED(hr)) {
-        D2D1_STROKE_STYLE_PROPERTIES props = D2D1::StrokeStyleProperties();
-        props.miterLimit = 0;
-        props.lineJoin = D2D1_LINE_JOIN_ROUND;
-        hr = bd->Factory->CreateStrokeStyle(props, NULL, 0, &bd->StrokeStyle);
-    }
-    if (SUCCEEDED(hr)) {
-        hr = DWriteCreateFactory(
-            DWRITE_FACTORY_TYPE_SHARED,
-            __uuidof(bd->WriteFactory),
-            reinterpret_cast<IUnknown**>(&bd->WriteFactory)
-        );
-    }
-    if (SUCCEEDED(hr)) {
-        return true;
-    }
-    return false;
-}
-
-void ImGui_ImplDirect2D_CreateDeviceObjects(ID2D1RenderTarget* image) {
-    ImGui_ImplDirect2DRenderer2_Data* bd = ImGui_ImplDirect2D_GetBackendData();
-    ID2D1RenderTarget* target = bd->RendererTarget;
-    if (image) {
-        bd->ImageRenderTarget = image;
-        target = image;
-    }
-    HRESULT hr = S_OK;
-    if (SUCCEEDED(hr)) {
-        hr = target->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::Orange), &bd->SolidColorBrush);
-    }
-    if (SUCCEEDED(hr)) {
-        hr = target->CreateGradientStopCollection(bd->GradientStops, 2U, &bd->GradientStopCollection);
-    }
-}
-void ImGui_ImplDirect2D_DestroyDeviceObjects()
-{
-    ImGui_ImplDirect2DRenderer2_Data* bd = ImGui_ImplDirect2D_GetBackendData();
-    if (bd->SolidColorBrush) {
-        bd->SolidColorBrush->Release();
-        bd->SolidColorBrush = nullptr;
-    }
-    if (bd->GradientStopCollection) {
-        bd->GradientStopCollection->Release();
-        bd->GradientStopCollection = nullptr;
-    }
-    // destroy db objects \TODO
-}
 
 
 inline static ImVec2 from(ImVec2 a, ImVec2 b, ImVec2 c, float u, float v, float w) {
@@ -329,49 +402,34 @@ static bool isLine(const ImVec2& uv, ImVec4* texUvLines, int count = IM_DRAWLIST
     }
     return false;
 }
-void     ImGui_ImplDirect2D_Shutdown() {
-    ImGui_ImplDirect2DRenderer2_Data* bd = ImGui_ImplDirect2D_GetBackendData();
-    IM_ASSERT(bd != nullptr && "No renderer backend to shutdown, or already shutdown?");
+
+
+
+void     ImGui_ImplD2D_RenderDrawData(ImDrawData* draw_data) {
     ImGuiIO& io = ImGui::GetIO();
-
-    ImGui_ImplDirect2D_DestroyDeviceObjects();
-
-    io.BackendRendererName = nullptr;
-    io.BackendRendererUserData = nullptr;
-    io.BackendFlags &= ~ImGuiBackendFlags_RendererHasVtxOffset;
-    IM_DELETE(bd);
-}
-
-void     ImGui_ImplDirect2D_NewFrame() {
-
-    ImGui_ImplDirect2DRenderer2_Data* bd = ImGui_ImplDirect2D_GetBackendData();
-    IM_ASSERT(bd != nullptr && "Did you call ImGui_ImplDirect2D_Init()?");
-
-    ImGuiIO& io = ImGui::GetIO();
-}
-
-
-void     ImGui_ImplDirect2D_RenderDrawData(ID2D1RenderTarget* RendererTarget, ImGui_ImplDirect2DRenderer2_Data* bd, ImDrawData* draw_data) {
-
-    ImGuiIO& io = ImGui::GetIO();
+    ImGui_ImplD2D_Data* bd = ImGui_ImplD2D_GetBackendData();
 
     // Will project scissor/clipping rectangles into framebuffer space
     ImVec2 clip_off = ImVec2{ 0, 0 };         // (0,0) unless using multi-viewports
     ImVec2 clip_scale = ImVec2{ 1, 1 };
-    float fb_width = RendererTarget->GetPixelSize().width;
-    float fb_height = RendererTarget->GetPixelSize().height;
+    const float fb_width = static_cast<float>(bd->RenderTarget->GetPixelSize().width);
+    const float fb_height = static_cast<float>(bd->RenderTarget->GetPixelSize().height);
 
     D2D1_POINT_2F points2f[3];
     memset(&points2f, 0, sizeof(points2f));
-    ID2D1BitmapBrush* bitmapBrush = nullptr;
-    ID2D1PathGeometry* pathGeometry = nullptr;
-    ID2D1GeometrySink* geometrySink = nullptr;
+    ImGui_ImplD2D_ComPtr<ID2D1BitmapBrush> bitmapBrush;
+    ImGui_ImplD2D_ComPtr<ID2D1PathGeometry> pathGeometry;
+    ImGui_ImplD2D_ComPtr<ID2D1GeometrySink> geometrySink;
+    ImGui_ImplD2D_ComPtr<ID2D1GradientStopCollection> stopsCol;
+    D2D1_RADIAL_GRADIENT_BRUSH_PROPERTIES radGradProps;
+    memset(&radGradProps, 0, sizeof(radGradProps));
+    ImGui_ImplD2D_ComPtr<ID2D1RadialGradientBrush> radGradBrush;
+    D2D1_LINEAR_GRADIENT_BRUSH_PROPERTIES linGradProps;
+    memset(&linGradProps, 0, sizeof(linGradProps));
+    ImGui_ImplD2D_ComPtr<ID2D1LinearGradientBrush> linGradBrush;
 
     HRESULT hr = S_OK;
-    if (!SUCCEEDED(hr)) {
-        return;
-    }
-    bool useClip = true;
+
     for (int n = 0; n < draw_data->CmdListsCount; n++)
     {
         const ImDrawList* cmd_list = draw_data->CmdLists[n];
@@ -402,29 +460,23 @@ void     ImGui_ImplDirect2D_RenderDrawData(ID2D1RenderTarget* RendererTarget, Im
                     continue;
 
                 D2D1_RECT_F clip = D2D1::RectF(clip_min.x, clip_min.y, clip_max.x, clip_max.y);
-                if (useClip) {
-                    RendererTarget->PushAxisAlignedClip(clip, D2D1_ANTIALIAS_MODE_ALIASED);
-                }
+                bd->RenderTarget->PushAxisAlignedClip(clip, D2D1_ANTIALIAS_MODE_ALIASED);
+
+
                 int vertCount = cmd_list->VtxBuffer.Size - pcmd->VtxOffset;
                 int indCount = pcmd->ElemCount;
                 const ImDrawVert* vert = vtx_buffer + pcmd->VtxOffset;
                 const ImDrawIdx* idx = idx_buffer + pcmd->IdxOffset;
 
                 {
-                    if (pathGeometry) {
-                        pathGeometry->Release();
-                        pathGeometry = nullptr;
-                    }
-                    hr = bd->Factory->CreatePathGeometry(&pathGeometry);
+                    pathGeometry.Release();
+                    hr = bd->Factory->CreatePathGeometry(&pathGeometry.Pointer);
                     if (FAILED(hr))
                     {
                         continue;
                     }
-                    if (geometrySink) {
-                        geometrySink->Release();
-                        geometrySink = nullptr;
-                    }
-                    hr = pathGeometry->Open(&geometrySink);
+                    geometrySink.Release();
+                    hr = pathGeometry.Pointer->Open(&geometrySink.Pointer);
                     if (FAILED(hr))
                     {
                         continue;
@@ -439,15 +491,6 @@ void     ImGui_ImplDirect2D_RenderDrawData(ID2D1RenderTarget* RendererTarget, Im
                     int figureIndStart = 0;
                     ImU32 green = ImGui::GetColorU32(IM_COL32(0, 255, 0, 255));
                     for (int i = 0; i < indCount; i += 3) {
-                        int skip = ImGui_ImplD2D_IsGlyph(RendererTarget, bd, io, pcmd, vert, idx, i);
-                        if (skip > 0) {
-                            // print stream
-
-                            i += skip - 3;
-                            continue;
-                        }
-
-
                         const ImDrawVert* xy0 = vert + idx[i];
                         const ImDrawVert* xy1 = vert + idx[i + 1];
                         const ImDrawVert* xy2 = vert + idx[i + 2];
@@ -464,22 +507,17 @@ void     ImGui_ImplDirect2D_RenderDrawData(ID2D1RenderTarget* RendererTarget, Im
                         bool test2 = idx[ioffset + 2] == idx[i] || idx[ioffset + 2] == idx[i + 1] || idx[ioffset + 2] == idx[i + 2];
                         bool test = test0 || test1 || test2;
                         if (!((color == xy0->col || color == xy1->col || color == xy2->col) && test)) {
-                            if (geometrySink) {
-                                hr = geometrySink->Close();
+                            if (geometrySink.Pointer) {
+                                hr = geometrySink.Pointer->Close();
+                                geometrySink.Release();
                                 if (FAILED(hr))
                                 {
                                     continue;
                                 }
-                                geometrySink->Release();
-                                geometrySink = nullptr;
                             }
-                            float size = 0.75f;
-                            //RendererTarget->DrawGeometry(pathGeometry, bd->SolidColorBrush, size, bd->StrokeStyle);
-                            //RendererTarget->SetAntialiasMode(D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
-
                             if (!isFont || (isWhite(xyFirst->uv, io.Fonts->TexUvWhitePixel) || isLine(xyFirst->uv, io.Fonts->TexUvLines))) {
 
-                                RendererTarget->SetAntialiasMode(D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+                                bd->RenderTarget->SetAntialiasMode(D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
                                 const ImDrawVert* verts[4] = { nullptr, nullptr, nullptr, nullptr };
                                 if (figureIndCount <= 6) {
                                     int ioffset = figureIndStart;
@@ -488,74 +526,61 @@ void     ImGui_ImplDirect2D_RenderDrawData(ID2D1RenderTarget* RendererTarget, Im
                                     verts[2] = vert + idx[ioffset + 2];
                                     verts[3] = vert + idx[ioffset + figureIndCount - 1];
                                     if (verts[0]->col == verts[1]->col && verts[2]->col == verts[3]->col && verts[1]->col == verts[2]->col) {
-                                        bd->SolidColorBrush->SetColor(toColor(color));
-                                        RendererTarget->FillGeometry(pathGeometry, bd->SolidColorBrush);
+                                        bd->SolidColorBrush.Pointer->SetColor(ImGui_ImplD2D_Color(color));
+                                        bd->RenderTarget->FillGeometry(pathGeometry.Pointer, bd->SolidColorBrush.Pointer);
                                     }
                                     else if (figureIndCount == 6 && (verts[0]->col == verts[3]->col || verts[0]->col == verts[1]->col)) {
-                                        ID2D1LinearGradientBrush* gradientBrush = nullptr;
+                                        bool success = true;
                                         if (verts[0]->col == verts[3]->col) {
-                                            auto props = D2D1::LinearGradientBrushProperties(D2D1::Point2F(verts[0]->pos.x, verts[0]->pos.y),
-                                                D2D1::Point2F(verts[1]->pos.x, verts[1]->pos.y));
-                                            bd->GradientStops[0].position = 0;
-                                            bd->GradientStops[1].position = 1;
-                                            bd->GradientStops[0].color = toColor(verts[0]->col);
-                                            bd->GradientStops[1].color = toColor(verts[1]->col);
-                                            bd->GradientStopCollection->Release();
-                                            RendererTarget->CreateGradientStopCollection(bd->GradientStops, 2U, &bd->GradientStopCollection);
-                                            RendererTarget->CreateLinearGradientBrush(props, bd->GradientStopCollection, &gradientBrush);
-
+                                            success = ImGui_ImplD2D_CreateBrush(linGradBrush, bd->GradientStops, stopsCol, linGradProps, bd->RenderTarget,
+                                                verts[0]->pos, verts[1]->pos, verts[0]->col, verts[1]->col);
                                         }
                                         else {
-                                            auto props = D2D1::LinearGradientBrushProperties(D2D1::Point2F(verts[1]->pos.x, verts[1]->pos.y),
-                                                D2D1::Point2F(verts[2]->pos.x, verts[2]->pos.y));
-                                            bd->GradientStops[0].position = 0;
-                                            bd->GradientStops[1].position = 1;
-                                            bd->GradientStops[0].color = toColor(verts[1]->col);
-                                            bd->GradientStops[1].color = toColor(verts[2]->col);
-                                            bd->GradientStopCollection->Release();
-                                            RendererTarget->CreateGradientStopCollection(bd->GradientStops, 2U, &bd->GradientStopCollection);
-                                            RendererTarget->CreateLinearGradientBrush(props, bd->GradientStopCollection, &gradientBrush);
-
+                                            success = ImGui_ImplD2D_CreateBrush(linGradBrush, bd->GradientStops, stopsCol, linGradProps, bd->RenderTarget,
+                                                verts[1]->pos, verts[2]->pos, verts[1]->col, verts[2]->col);
                                         }
 
-                                        RendererTarget->SetAntialiasMode(D2D1_ANTIALIAS_MODE_ALIASED);
-                                        RendererTarget->FillGeometry(pathGeometry, gradientBrush);
-                                        RendererTarget->SetAntialiasMode(D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
-
-                                        if (gradientBrush) {
-                                            gradientBrush->Release();
-                                            gradientBrush = nullptr;
+                                        if (success) {
+                                            bd->RenderTarget->SetAntialiasMode(D2D1_ANTIALIAS_MODE_ALIASED);
+                                            bd->RenderTarget->FillGeometry(pathGeometry.Pointer, linGradBrush.Pointer);
+                                            bd->RenderTarget->SetAntialiasMode(D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+                                            linGradBrush.Release();
+                                            stopsCol.Release();
                                         }
                                     }
                                     else {
-                                        //color = ImGui::GetColorU32(IM_COL32(255, 0, 0, 255));
                                         ImVec2 middle;
                                         middle.x = 0.25 * (verts[0]->pos.x + verts[1]->pos.x + verts[2]->pos.x + verts[3]->pos.x);
                                         middle.y = 0.25 * (verts[0]->pos.y + verts[1]->pos.y + verts[2]->pos.y + verts[3]->pos.y);
-                                        ID2D1RadialGradientBrush* gradientBrush = nullptr;
-                                        CreateGradientBrush(&gradientBrush, RendererTarget, bd, verts[0]->pos, verts[2]->pos, verts[0]->col, verts[0]->col & 0x00FFFFFFu);
-                                        RendererTarget->FillGeometry(pathGeometry, gradientBrush);
-                                        CreateGradientBrush(&gradientBrush, RendererTarget, bd, verts[2]->pos, verts[0]->pos, verts[2]->col, verts[2]->col & 0x00FFFFFFu);
-                                        RendererTarget->FillGeometry(pathGeometry, gradientBrush);
-                                        CreateGradientBrush(&gradientBrush, RendererTarget, bd, verts[1]->pos, verts[3]->pos, verts[1]->col, verts[1]->col & 0x00FFFFFFu);
-                                        RendererTarget->FillGeometry(pathGeometry, gradientBrush);
-                                        CreateGradientBrush(&gradientBrush, RendererTarget, bd, verts[3]->pos, verts[1]->pos, verts[3]->col, verts[3]->col & 0x00FFFFFFu);
-                                        RendererTarget->FillGeometry(pathGeometry, gradientBrush);
-                                        if (gradientBrush) {
-                                            (gradientBrush)->Release();
-                                            (gradientBrush) = nullptr;
+
+                                        if (ImGui_ImplD2D_CreateBrush(radGradBrush, bd->GradientStops, stopsCol, radGradProps, bd->RenderTarget,
+                                            verts[0]->pos, verts[2]->pos, verts[0]->col, verts[0]->col & 0x00FFFFFFu)) {
+                                            bd->RenderTarget->FillGeometry(pathGeometry.Pointer, radGradBrush.Pointer);
                                         }
-                                        //bd->SolidColorBrush->SetColor(toColor(color));
+                                        if (ImGui_ImplD2D_CreateBrush(radGradBrush, bd->GradientStops, stopsCol, radGradProps, bd->RenderTarget,
+                                            verts[2]->pos, verts[0]->pos, verts[2]->col, verts[2]->col & 0x00FFFFFFu)) {
+                                            bd->RenderTarget->FillGeometry(pathGeometry.Pointer, radGradBrush.Pointer);
+                                        }
+                                        if (ImGui_ImplD2D_CreateBrush(radGradBrush, bd->GradientStops, stopsCol, radGradProps, bd->RenderTarget,
+                                            verts[1]->pos, verts[3]->pos, verts[1]->col, verts[1]->col & 0x00FFFFFFu)) {
+                                            bd->RenderTarget->FillGeometry(pathGeometry.Pointer, radGradBrush.Pointer);
+                                        }
+                                        if (figureIndCount > 3 && ImGui_ImplD2D_CreateBrush(radGradBrush, bd->GradientStops, stopsCol, radGradProps, bd->RenderTarget,
+                                            verts[3]->pos, verts[1]->pos, verts[3]->col, verts[3]->col & 0x00FFFFFFu)) {
+                                            bd->RenderTarget->FillGeometry(pathGeometry.Pointer, radGradBrush.Pointer);
+                                        }
+                                        radGradBrush.Release();
+                                        stopsCol.Release();
                                     }
                                 }
                                 else {
-                                    bd->SolidColorBrush->SetColor(toColor(color));
-                                    RendererTarget->FillGeometry(pathGeometry, bd->SolidColorBrush);
-                                    //RendererTarget->DrawGeometry(pathGeometry, bd->SolidColorBrush, 0.5);
+                                    bd->SolidColorBrush.Pointer->SetColor(ImGui_ImplD2D_Color(color));
+                                    bd->RenderTarget->FillGeometry(pathGeometry.Pointer, bd->SolidColorBrush.Pointer);
                                 }
                             }
                             else
                             {
+#if 0
                                 IWICImagingFactory* WicFactory = nullptr;
                                 hr = CoCreateInstance(CLSID_WICImagingFactory, NULL, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&WicFactory));
                                 unsigned char* pixels = nullptr;
@@ -585,51 +610,54 @@ void     ImGui_ImplDirect2D_RenderDrawData(ID2D1RenderTarget* RendererTarget, Im
                                 b->Release();
                                 WicFactory->Release();
                                 WicFactory = nullptr;
+#else
+                                bd->SolidColorBrush.Pointer->SetColor(D2D1::ColorF(D2D1::ColorF::White));
+                                bd->RenderTarget->FillGeometry(pathGeometry.Pointer, bd->SolidColorBrush.Pointer);
+#endif // 0
                             }
                             xyFirst = xy0;
                             figureIndCount = 0;
                             figureIndStart = i;
                             color = xy0->col;
-                            if (pathGeometry) {
-                                pathGeometry->Release();
-
-                                pathGeometry = nullptr;
-                            }
-                            hr = bd->Factory->CreatePathGeometry(&pathGeometry);
+                            pathGeometry.Release();
+                            hr = bd->Factory->CreatePathGeometry(&pathGeometry.Pointer);
                             if (FAILED(hr))
                             {
                                 continue;
                             }
-                            hr = pathGeometry->Open(&geometrySink);
+                            hr = pathGeometry.Pointer->Open(&geometrySink.Pointer);
                             if (FAILED(hr))
                             {
                                 continue;
                             }
                         }
+                        int skip = ImGui_ImplD2D_IsGlyph(bd->RenderTarget, bd, io, pcmd, vert, idx, i);
+                        if (skip > 0) {
+                            // print stream
 
-                        geometrySink->SetFillMode(D2D1_FILL_MODE_ALTERNATE);
-                        geometrySink->SetSegmentFlags(D2D1_PATH_SEGMENT_FORCE_ROUND_LINE_JOIN);
-                        geometrySink->BeginFigure(points2f[0], D2D1_FIGURE_BEGIN_FILLED);
-                        geometrySink->AddLines(&points2f[0], 3);
-                        geometrySink->EndFigure(D2D1_FIGURE_END_CLOSED);
+                            i += skip - 3;
+                            continue;
+                        }
+
+                        geometrySink.Pointer->SetFillMode(D2D1_FILL_MODE_ALTERNATE);
+                        geometrySink.Pointer->SetSegmentFlags(D2D1_PATH_SEGMENT_FORCE_ROUND_LINE_JOIN);
+                        geometrySink.Pointer->BeginFigure(points2f[0], D2D1_FIGURE_BEGIN_FILLED);
+                        geometrySink.Pointer->AddLines(&points2f[0], 3);
+                        geometrySink.Pointer->EndFigure(D2D1_FIGURE_END_CLOSED);
                         figureIndCount += 3;
 
                         ImTextureID texture = pcmd->GetTexID();
                     }
-                    hr = geometrySink->Close();
+                    hr = geometrySink.Pointer->Close();
                     if (FAILED(hr))
                     {
                         continue;
                     }
-                    geometrySink->Release();
-                    geometrySink = nullptr;
-                    bd->SolidColorBrush->SetColor(toColor(color));
-                    RendererTarget->SetAntialiasMode(D2D1_ANTIALIAS_MODE_ALIASED);
-                    RendererTarget->SetAntialiasMode(D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
-                    float size = 0.75f;
-                    //RendererTarget->DrawGeometry(pathGeometry, bd->SolidColorBrush, size, bd->StrokeStyle);
-                    RendererTarget->SetAntialiasMode(D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
-
+                    geometrySink.Release();
+                    bd->SolidColorBrush.Pointer->SetColor(ImGui_ImplD2D_Color(color));
+                    bd->RenderTarget->SetAntialiasMode(D2D1_ANTIALIAS_MODE_ALIASED);
+                    bd->RenderTarget->SetAntialiasMode(D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+#if 0 
                     if (!isFont || (isWhite(xyFirst->uv, io.Fonts->TexUvWhitePixel) || isLine(xyFirst->uv, io.Fonts->TexUvLines))) {
                         const ImDrawVert* verts[4] = { nullptr, nullptr, nullptr, nullptr };
                         if (figureIndCount <= 6) {
@@ -668,8 +696,8 @@ void     ImGui_ImplDirect2D_RenderDrawData(ID2D1RenderTarget* RendererTarget, Im
                                     RendererTarget->CreateLinearGradientBrush(props, bd->GradientStopCollection, &gradientBrush);
 
                                 }
-                                RendererTarget->SetAntialiasMode(D2D1_ANTIALIAS_MODE_ALIASED);
-                                RendererTarget->FillGeometry(pathGeometry, gradientBrush);
+                                bd->RenderTarget->SetAntialiasMode(D2D1_ANTIALIAS_MODE_ALIASED);
+                                bd->RenderTarget->FillGeometry(pathGeometry.Pointer, gradientBrush);
                                 RendererTarget->SetAntialiasMode(D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
 
                                 if (gradientBrush) {
@@ -685,6 +713,7 @@ void     ImGui_ImplDirect2D_RenderDrawData(ID2D1RenderTarget* RendererTarget, Im
                     }
                     else
                     {
+#if 0 
                         IWICImagingFactory* WicFactory = nullptr;
                         hr = CoCreateInstance(CLSID_WICImagingFactory, NULL, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&WicFactory));
                         unsigned char* pixels = nullptr;
@@ -708,115 +737,23 @@ void     ImGui_ImplDirect2D_RenderDrawData(ID2D1RenderTarget* RendererTarget, Im
 
                         bitmapBrush->SetTransform(transUv * scale * trans);
 
-                        RendererTarget->FillGeometry(pathGeometry, bitmapBrush);
+                        bd->RenderTarget->FillGeometry(pathGeometry.Pointer, bitmapBrush);
 
                         bitmapBrush->Release();
                         b->Release();
                         WicFactory->Release();
                         WicFactory = nullptr;
+#endif // 0
                     }
-                    //RendererTarget->FillGeometry(pathGeometry, bd->SolidColorBrush);
-                    pathGeometry->Release();
-                    pathGeometry = NULL;
+#endif // 0
+                    pathGeometry.Release();
                 }
-                if (useClip) {
-                    RendererTarget->PopAxisAlignedClip();
-                }
+                bd->RenderTarget->PopAxisAlignedClip();
             }
         }
-        //	bd->Renderer->end();
-
     }
 
 }
 
-void     ImGui_ImplDirect2D_RenderDrawData(ImDrawData* draw_data) {
-
-    ImGuiIO& io = ImGui::GetIO();
-    ImGui_ImplDirect2DRenderer2_Data* bd = ImGui_ImplDirect2D_GetBackendData();
-    auto ptr = bd->ImageRenderTarget;
-    if (false || bd->RendererTarget) {
-        ImGui_ImplDirect2D_DestroyDeviceObjects();
-        ImGui_ImplDirect2D_CreateDeviceObjects(bd->RendererTarget);
-        bd->RendererTarget->GetFactory(&bd->Factory);
-        ImGui_ImplDirect2D_RenderDrawData(bd->RendererTarget, bd, draw_data);
-    }
-    if (ptr) {
-        ImGui_ImplDirect2D_DestroyDeviceObjects();
-        ImGui_ImplDirect2D_CreateDeviceObjects(ptr);
-        bd->ImageRenderTarget->GetFactory(&bd->Factory);
-        ImGui_ImplDirect2D_RenderDrawData(bd->ImageRenderTarget, bd, draw_data);
-    }
-}
-
-IMGUI_IMPL_API void ImGui_ImplDirect2D_WriteToFile(IWICBitmap* pWICBitmap, IWICImagingFactory* pWICFactory) {
-    static int i = 0;
-    ImGuiIO& io = ImGui::GetIO();
-    ImGui_ImplDirect2DRenderer2_Data* bd = ImGui_ImplDirect2D_GetBackendData();
-
-    IWICStream* pStream = NULL;
-    IWICBitmapEncoder* pEncoder = NULL;
-    IWICBitmapFrameEncode* pFrameEncode = NULL;
-    HRESULT hr = S_OK;
-    if (SUCCEEDED(hr))
-    {
-        // Save the image to a file.
-        hr = pWICFactory->CreateStream(&pStream);
-    }
-
-    WICPixelFormatGUID format = GUID_WICPixelFormatDontCare;
-
-    // Use InitializeFromFilename to write to a file. If there is need to write inside the memory, use InitializeFromMemory. 
-    if (SUCCEEDED(hr))
-    {
-        WCHAR filename[255] = L"output.png";
-        swprintf(filename, L"output%d.png", i);
-        i++;
-        hr = pStream->InitializeFromFilename(filename, GENERIC_WRITE);
-    }
-    if (SUCCEEDED(hr))
-    {
-        hr = pWICFactory->CreateEncoder(GUID_ContainerFormatPng, NULL, &pEncoder);
-    }
-    if (SUCCEEDED(hr))
-    {
-        hr = pEncoder->Initialize(pStream, WICBitmapEncoderNoCache);
-    }
-    if (SUCCEEDED(hr))
-    {
-        hr = pEncoder->CreateNewFrame(&pFrameEncode, NULL);
-    }
-    // Use IWICBitmapFrameEncode to encode the bitmap into the picture format you want.
-    if (SUCCEEDED(hr))
-    {
-        hr = pFrameEncode->Initialize(NULL);
-    }
-    UINT sc_bitmapWidth = 0;
-    UINT sc_bitmapHeight = 0;
-    if (SUCCEEDED(hr)) {
-        hr = pWICBitmap->GetSize(&sc_bitmapWidth, &sc_bitmapHeight);
-    }
-    if (SUCCEEDED(hr))
-    {
-        hr = pFrameEncode->SetSize(sc_bitmapWidth, sc_bitmapHeight);
-    }
-    if (SUCCEEDED(hr))
-    {
-        hr = pFrameEncode->SetPixelFormat(&format);
-    }
-    if (SUCCEEDED(hr))
-    {
-        hr = pFrameEncode->WriteSource(pWICBitmap, NULL);
-    }
-    if (SUCCEEDED(hr))
-    {
-        hr = pFrameEncode->Commit();
-    }
-    if (SUCCEEDED(hr))
-    {
-        hr = pEncoder->Commit();
-    }
-}
-#endif // 0
 #endif
 

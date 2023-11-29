@@ -2,11 +2,11 @@
 // This needs to be used along with a Platform Backend (e.g. Win32)
 
 // Implemented features:
-//  [ ] Init: Initialize/shutdown context
+//  [x] Init: Initialize/shutdown context
 //  [ ] Font: Custom font builder for Direct Write
 //  [ ] Renderer: Render fonts using Direct Write
-//  [ ] Renderer: Render single color triangles
-//  [ ] Renderer: Render triangles with gradient
+//  [x] Renderer: Render single color triangles
+//  [x] Renderer: Render triangles with gradient
 //  [ ] Renderer: Render triangles with texture
 
 // You can use unmodified imgui_impl_* files in your project. See examples/ folder for examples of using this.
@@ -36,6 +36,6 @@ IMGUI_IMPL_API bool		ImGui_ImplD2D_FontBuilder_Build(ImFontAtlas* atlas);
 IMGUI_IMPL_API bool     ImGui_ImplD2D_CreateFontsTexture();
 IMGUI_IMPL_API void     ImGui_ImplD2D_DestroyFontsTexture();
 IMGUI_IMPL_API void     ImGui_ImplD2D_DestroyDeviceObjects();
-IMGUI_IMPL_API void     ImGui_ImplD2D_CreateDeviceObjects(ID2D1RenderTarget* renderTarget);
+IMGUI_IMPL_API bool     ImGui_ImplD2D_CreateDeviceObjects(ID2D1RenderTarget* renderTarget);
 
 #endif // #ifndef IMGUI_DISABLE

@@ -1,8 +1,9 @@
 from conan import ConanFile
 from conan.tools.cmake import CMakeToolchain, CMake, cmake_layout
-from conan.tools.files import load
+from conan.tools.files import load, copy
 from conan.tools.scm import Git
 import re
+import os
 
 class ImGuiImplD2D(ConanFile):
     name = "ImGuiImplD2D"
@@ -61,6 +62,10 @@ class ImGuiImplD2D(ConanFile):
         cmake_layout(self)
 
     def generate(self):
+        backends = os.path.join(self.export_sources_folder, "backends")
+        copy(self, "imgui_impl_sdlrenderer2.*", self.dependencies["imgui"].cpp_info.srcdirs[0], os.path.join(self.build_folder, "backends"))
+        copy(self, "imgui_impl_sdl2.*", self.dependencies["imgui"].cpp_info.srcdirs[0], os.path.join(self.build_folder, "backends"))
+        copy(self, "imgui_impl_win32.*", self.dependencies["imgui"].cpp_info.srcdirs[0], os.path.join(self.build_folder, "backends"))
         tc = CMakeToolchain(self)
         tc.generate()
 
