@@ -2,7 +2,9 @@
 
 ## Changelog
 
-* 2023-11-29: Working triangle rendering
+* 2023-11-29: feat: working triangle rendering
+* 2024-01-10: refactor: simplification of polygon detection (bit buggy on gradients)
+* 2024-01-11: fix: correct gradient detection, disable anti-aliasing flags due to rendring bug
 
 For more information see [WIKI](https://github.com/rymut/imgui_impl_d2d/wiki).
 
