@@ -776,366 +776,160 @@ void     ImGui_ImplD2D_RenderDrawData(ImDrawData* draw_data) {
                 const ImDrawIdx* idx = idx_buffer + pcmd->IdxOffset;
                 const ImTextureID texture = pcmd->GetTexID();
                 const bool isFontOrLine = texture == io.Fonts->TexID;
-                if (true)
-                {
-                    int idxOffset = 0;
-                    pathGeometry.Release();
-                    geometrySink.Release();
-                    while (idxOffset < indCount) {
-                        int polygonIndicates = 0;
-                        ImDrawIdx prevIdx[3] = { idx[idxOffset + 0], idx[idxOffset + 1], idx[idxOffset + 2] };
-                        ImU32 prevCol = (vert + prevIdx[0])->col;
-                        for (int i = idxOffset; i < indCount; i += 3) {
-                            ImDrawIdx currIdx[3] = { idx[i], idx[i + 1], idx[i + 2] };
-                            const bool commonIndicateTest =
-                                prevIdx[0] == currIdx[0] || prevIdx[0] == currIdx[1] || prevIdx[0] == currIdx[2] ||
-                                prevIdx[1] == currIdx[0] || prevIdx[1] == currIdx[1] || prevIdx[1] == currIdx[2] ||
-                                prevIdx[2] == currIdx[0] || prevIdx[2] == currIdx[1] || prevIdx[2] == currIdx[2];
-                            if (commonIndicateTest == false) {
-                                break;
+                int idxOffset = 0;
+                pathGeometry.Release();
+                geometrySink.Release();
+                while (idxOffset < indCount) {
+                    int polygonIndicates = 0;
+                    int polygonColorsCount = 1;
+                    ImDrawIdx prevIdx[3] = { idx[idxOffset + 0], idx[idxOffset + 1], idx[idxOffset + 2] };
+                    ImU32 polygonColors[6] = { (vert + prevIdx[0])->col, 0x0, 0x0, 0x0, 0x0, 0x0 };
+                    for (int i = idxOffset; i < indCount; i += 3) {
+                        ImDrawIdx currIdx[3] = { idx[i], idx[i + 1], idx[i + 2] };
+                        const bool commonIndicateTest =
+                            prevIdx[0] == currIdx[0] || prevIdx[0] == currIdx[1] || prevIdx[0] == currIdx[2] ||
+                            prevIdx[1] == currIdx[0] || prevIdx[1] == currIdx[1] || prevIdx[1] == currIdx[2] ||
+                            prevIdx[2] == currIdx[0] || prevIdx[2] == currIdx[1] || prevIdx[2] == currIdx[2];
+                        if (commonIndicateTest == false) {
+                            break;
+                        }
+                        const ImDrawVert* verts[3] = { vert + currIdx[0], vert + currIdx[1], vert + currIdx[2] };
+                        int currColCount = 0;
+                        const ImU32 currCol[3] = { verts[0]->col, verts[1]->col, verts[2]->col };
+                        int nextPolygonColorsCount = polygonColorsCount;
+                        for (int c = 0; c < 3; c++) {
+                            bool nextColor = true;
+                            for (int p = 0; p < nextPolygonColorsCount; p++) {
+                                if (currCol[c] == polygonColors[p]) {
+                                    nextColor = false;
+                                    break;
+                                }
                             }
-                            const ImDrawVert* verts[3] = { vert + currIdx[0], vert + currIdx[1], vert + currIdx[2] };
-                            const bool sameColorTest = prevCol == verts[0]->col || prevCol == verts[1]->col || prevCol == verts[2]->col;
-                            if (sameColorTest == false) {
-                                break;
+                            if (nextColor) {
+                                polygonColors[nextPolygonColorsCount] = currCol[c];
+                                nextPolygonColorsCount++;
                             }
-                            memcpy(&prevIdx, &currIdx, sizeof(currIdx));
-                            polygonIndicates += 3;
                         }
-                        const int idxStart = idxOffset;
-                        idxOffset += polygonIndicates;
-                        // drawing
-                        hr = bd->Factory->CreatePathGeometry(&pathGeometry.Pointer);
-                        if (FAILED(hr))
-                        {
-                            continue;
+                            
+                        // only triangles & quads can be renderer with more than one color
+                        if (polygonIndicates > 6 && nextPolygonColorsCount > 1) {
+                            break;
                         }
-                        hr = pathGeometry.Pointer->Open(&geometrySink.Pointer);
-                        if (FAILED(hr))
-                        {
-                            continue;
+                        const bool isOnePoly = prevIdx[0] == currIdx[0] && prevIdx[2] == currIdx[1];
+                        polygonColorsCount = nextPolygonColorsCount;
+                        memcpy(&prevIdx, &currIdx, sizeof(currIdx));
+                        polygonIndicates += 3;
+                        if (polygonIndicates >= 3 && polygonColorsCount > 2) {
+                            break;
                         }
-                        geometrySink.Pointer->SetFillMode(D2D1_FILL_MODE_ALTERNATE);
-                        geometrySink.Pointer->SetSegmentFlags(D2D1_PATH_SEGMENT_FORCE_ROUND_LINE_JOIN);
-                        D2D1_POINT_2F point;
-                        for (int i = idxStart; i < idxOffset; i += 3) {
-                            int o = idx[i];
-                            point.x = (vert + o)->pos.x;
-                            point.y = (vert + o)->pos.y;
-                            geometrySink.Pointer->BeginFigure(point, D2D1_FIGURE_BEGIN_FILLED);
-                            geometrySink.Pointer->AddLine(point);
-                            o = idx[i + 1];
-                            point.x = (vert + o)->pos.x;
-                            point.y = (vert + o)->pos.y;
-                            geometrySink.Pointer->AddLine(point);
-                            o = idx[i + 2];
-                            point.x = (vert + o)->pos.x;
-                            point.y = (vert + o)->pos.y;
-                            geometrySink.Pointer->AddLine(point);
-                            geometrySink.Pointer->EndFigure(D2D1_FIGURE_END_CLOSED);
-                        }
-                        hr = geometrySink.Pointer->Close();
-                        geometrySink.Release();
-                        if (FAILED(hr))
-                        {
-                            continue;
+                        if (polygonIndicates == 6 && polygonColorsCount == 2) {
+                            break;
                         }
 
-                        bd->SolidColorBrush.Pointer->SetColor(ImGui_ImplD2D_Color(prevCol));
-                        bd->RenderTarget->FillGeometry(pathGeometry.Pointer, bd->SolidColorBrush.Pointer);
-                        pathGeometry.Release();
                     }
-                }
-                else
-                {
-                    pathGeometry.Release();
+                    const int idxStart = idxOffset;
+                    idxOffset += polygonIndicates;
+                    // drawing
                     hr = bd->Factory->CreatePathGeometry(&pathGeometry.Pointer);
                     if (FAILED(hr))
                     {
                         continue;
                     }
-                    geometrySink.Release();
                     hr = pathGeometry.Pointer->Open(&geometrySink.Pointer);
                     if (FAILED(hr))
                     {
                         continue;
                     }
+                    geometrySink.Pointer->SetFillMode(D2D1_FILL_MODE_ALTERNATE);
+                    geometrySink.Pointer->SetSegmentFlags(D2D1_PATH_SEGMENT_FORCE_ROUND_LINE_JOIN);
 
-                    const ImTextureID texture = pcmd->GetTexID();
-                    const bool isFont = texture == io.Fonts->TexID;
-                    const ImDrawVert* xyFirst = vert + idx[0];
-                    ImU32 color = xyFirst->col;
-                    ImDrawIdx index = idx[2];
-                    int figureIndCount = 0;
-                    int figureIndStart = 0;
-                    ImU32 green = ImGui::GetColorU32(IM_COL32(0, 255, 0, 255));
+                    D2D1_POINT_2F point;
+                    for (int i = idxStart; i < idxOffset; i += 3) {
+                        int o = idx[i];
+                        point.x = (vert + o)->pos.x;
+                        point.y = (vert + o)->pos.y;
+                        geometrySink.Pointer->BeginFigure(point, D2D1_FIGURE_BEGIN_FILLED);
 
-
-                    for (int i = 0; i < indCount; i += 3) {
-                        // 1 for every triangle
-                        // 1. checki
-                        const ImDrawVert* xy0 = vert + idx[i];
-                        const ImDrawVert* xy1 = vert + idx[i + 1];
-                        const ImDrawVert* xy2 = vert + idx[i + 2];
-
-                        points2f[0].x = (float)(xy0->pos.x);
-                        points2f[0].y = (float)(xy0->pos.y);
-                        points2f[1].x = (float)(xy1->pos.x);
-                        points2f[1].y = (float)(xy1->pos.y);
-                        points2f[2].x = (float)(xy2->pos.x);
-                        points2f[2].y = (float)(xy2->pos.y);
-                        int ioffset = i > 0 ? i - 3 : 0;
-                        bool test0 = idx[ioffset] == idx[i] || idx[ioffset] == idx[i + 1] || idx[ioffset] == idx[i + 2];
-                        bool test1 = idx[ioffset + 1] == idx[i] || idx[ioffset + 1] == idx[i + 1] || idx[ioffset + 1] == idx[i + 2];
-                        bool test2 = idx[ioffset + 2] == idx[i] || idx[ioffset + 2] == idx[i + 1] || idx[ioffset + 2] == idx[i + 2];
-                        bool test = test0 || test1 || test2;
-                        if (!((color == xy0->col || color == xy1->col || color == xy2->col) && test)) {
-                            if (geometrySink.Pointer) {
-                                hr = geometrySink.Pointer->Close();
-                                geometrySink.Release();
-                                if (FAILED(hr))
-                                {
-                                    continue;
-                                }
-                            }
-                            if (!isFont || (isWhite(xyFirst->uv, io.Fonts->TexUvWhitePixel) || isLine(xyFirst->uv, io.Fonts->TexUvLines))) {
-
-                                bd->RenderTarget->SetAntialiasMode(D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
-                                const ImDrawVert* verts[4] = { nullptr, nullptr, nullptr, nullptr };
-                                if (figureIndCount <= 6) {
-                                    int ioffset = figureIndStart;
-                                    verts[0] = vert + idx[ioffset];
-                                    verts[1] = vert + idx[ioffset + 1];
-                                    verts[2] = vert + idx[ioffset + 2];
-                                    verts[3] = vert + idx[ioffset + figureIndCount - 1];
-                                    if (verts[0]->col == verts[1]->col && verts[2]->col == verts[3]->col && verts[1]->col == verts[2]->col) {
-                                        // ImPolygonSides_Four || ImPolygonSides_three
-                                        bd->SolidColorBrush.Pointer->SetColor(ImGui_ImplD2D_Color(color));
-                                        bd->RenderTarget->FillGeometry(pathGeometry.Pointer, bd->SolidColorBrush.Pointer);
-                                    }
-                                    else if (figureIndCount == 6 && (verts[0]->col == verts[3]->col || verts[0]->col == verts[1]->col)) {
-                                        // ImPolygonSides_Four
-                                        // ImPolygonShading_Gradient2
-                                        bool success = true;
-                                        if (verts[0]->col == verts[3]->col) {
-                                            success = ImGui_ImplD2D_CreateBrush(linGradBrush, bd->GradientStops, stopsCol, linGradProps, bd->RenderTarget,
-                                                verts[0]->pos, verts[1]->pos, verts[0]->col, verts[1]->col);
-                                        }
-                                        else {
-                                            success = ImGui_ImplD2D_CreateBrush(linGradBrush, bd->GradientStops, stopsCol, linGradProps, bd->RenderTarget,
-                                                verts[1]->pos, verts[2]->pos, verts[1]->col, verts[2]->col);
-                                        }
-
-                                        if (success) {
-                                            bd->RenderTarget->SetAntialiasMode(D2D1_ANTIALIAS_MODE_ALIASED);
-                                            bd->RenderTarget->FillGeometry(pathGeometry.Pointer, linGradBrush.Pointer);
-                                            bd->RenderTarget->SetAntialiasMode(D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
-                                            linGradBrush.Release();
-                                            stopsCol.Release();
-                                        }
-                                    }
-                                    else {
-                                        // ImPolygonSides_Three
-                                        // ImPolygonShading_Gradient3
-                                        ImVec2 middle;
-                                        middle.x = 0.25 * (verts[0]->pos.x + verts[1]->pos.x + verts[2]->pos.x + verts[3]->pos.x);
-                                        middle.y = 0.25 * (verts[0]->pos.y + verts[1]->pos.y + verts[2]->pos.y + verts[3]->pos.y);
-
-                                        if (ImGui_ImplD2D_CreateBrush(radGradBrush, bd->GradientStops, stopsCol, radGradProps, bd->RenderTarget,
-                                            verts[0]->pos, verts[2]->pos, verts[0]->col, verts[0]->col & 0x00FFFFFFu)) {
-                                            bd->RenderTarget->FillGeometry(pathGeometry.Pointer, radGradBrush.Pointer);
-                                        }
-                                        if (ImGui_ImplD2D_CreateBrush(radGradBrush, bd->GradientStops, stopsCol, radGradProps, bd->RenderTarget,
-                                            verts[2]->pos, verts[0]->pos, verts[2]->col, verts[2]->col & 0x00FFFFFFu)) {
-                                            bd->RenderTarget->FillGeometry(pathGeometry.Pointer, radGradBrush.Pointer);
-                                        }
-                                        if (ImGui_ImplD2D_CreateBrush(radGradBrush, bd->GradientStops, stopsCol, radGradProps, bd->RenderTarget,
-                                            verts[1]->pos, verts[3]->pos, verts[1]->col, verts[1]->col & 0x00FFFFFFu)) {
-                                            bd->RenderTarget->FillGeometry(pathGeometry.Pointer, radGradBrush.Pointer);
-                                        }
-                                        if (figureIndCount > 3 && ImGui_ImplD2D_CreateBrush(radGradBrush, bd->GradientStops, stopsCol, radGradProps, bd->RenderTarget,
-                                            verts[3]->pos, verts[1]->pos, verts[3]->col, verts[3]->col & 0x00FFFFFFu)) {
-                                            bd->RenderTarget->FillGeometry(pathGeometry.Pointer, radGradBrush.Pointer);
-                                        }
-                                        radGradBrush.Release();
-                                        stopsCol.Release();
-                                    }
-                                }
-                                else {
-                                    // ImPolygonSides_Many
-                                    // ImPolygonShading_Flat
-                                    bd->SolidColorBrush.Pointer->SetColor(ImGui_ImplD2D_Color(color));
-                                    bd->RenderTarget->FillGeometry(pathGeometry.Pointer, bd->SolidColorBrush.Pointer);
-                                }
-                            }
-                            else
-                            {
-#if 0
-                                IWICImagingFactory* WicFactory = nullptr;
-                                hr = CoCreateInstance(CLSID_WICImagingFactory, NULL, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&WicFactory));
-                                unsigned char* pixels = nullptr;
-                                int width = 0, height = 0, bpp = 0;
-                                io.Fonts->GetTexDataAsRGBA32(&pixels, &width, &height, &bpp);
-
-                                ID2D1BitmapBrush* bitmapBrush = nullptr;
-                                ID2D1Bitmap* b = ImGui_ImplD2D_LoadTextureRgb32(RendererTarget, WicFactory, pixels, width, height, width * bpp, width * bpp * height);
-                                RendererTarget->CreateBitmapBrush(b, &bitmapBrush);
-                                ImVec2 pos00 = xyFirst->pos;
-                                ImVec2 pos11 = (xyFirst + 2)->pos;
-                                ImVec2 uv00 = xyFirst->uv;
-                                ImVec2 uv11 = (xyFirst + 2)->uv;
-                                ImVec2 rectCropFactor = { uv11.x - uv00.x, uv11.y - uv00.y };
-                                ImVec2 rectSize = { pos11.x - pos00.x, pos11.y - pos00.y };
-                                ImVec2 scaleFactor = { rectSize.x / (rectCropFactor.x * width), rectSize.y / (rectCropFactor.y * height) };
-
-                                D2D1::Matrix3x2F transUv = D2D1::Matrix3x2F::Translation(-uv00.x * width, -uv00.y * height);
-                                D2D1::Matrix3x2F trans = D2D1::Matrix3x2F::Translation(pos00.x, pos00.y);
-                                D2D1::Matrix3x2F scale = D2D1::Matrix3x2F::Scale(scaleFactor.x, scaleFactor.y);
-
-                                bitmapBrush->SetTransform(transUv * scale * trans);
-
-                                RendererTarget->FillGeometry(pathGeometry, bitmapBrush);
-
-                                bitmapBrush->Release();
-                                b->Release();
-                                WicFactory->Release();
-                                WicFactory = nullptr;
-#else
-                                bd->SolidColorBrush.Pointer->SetColor(D2D1::ColorF(D2D1::ColorF::White));
-                                bd->RenderTarget->FillGeometry(pathGeometry.Pointer, bd->SolidColorBrush.Pointer);
-#endif // 0
-                                }
-                            xyFirst = xy0;
-                            figureIndCount = 0;
-                            figureIndStart = i;
-                            color = xy0->col;
-                            pathGeometry.Release();
-                            hr = bd->Factory->CreatePathGeometry(&pathGeometry.Pointer);
-                            if (FAILED(hr))
-                            {
-                                continue;
-                            }
-                            hr = pathGeometry.Pointer->Open(&geometrySink.Pointer);
-                            if (FAILED(hr))
-                            {
-                                continue;
-                            }
-                            }
-                        int skip = ImGui_ImplD2D_IsGlyph(bd->RenderTarget, bd, io, pcmd, vert, idx, i);
-                        if (skip > 0) {
-                            // print stream
-
-                            i += skip - 3;
-                            continue;
-                        }
-
-                        geometrySink.Pointer->SetFillMode(D2D1_FILL_MODE_ALTERNATE);
-                        geometrySink.Pointer->SetSegmentFlags(D2D1_PATH_SEGMENT_FORCE_ROUND_LINE_JOIN);
-                        geometrySink.Pointer->BeginFigure(points2f[0], D2D1_FIGURE_BEGIN_FILLED);
-                        geometrySink.Pointer->AddLines(&points2f[0], 3);
+                        geometrySink.Pointer->AddLine(point);
+                        o = idx[i + 1];
+                        point.x = (vert + o)->pos.x;
+                        point.y = (vert + o)->pos.y;
+                        geometrySink.Pointer->AddLine(point);
+                        o = idx[i + 2];
+                        point.x = (vert + o)->pos.x;
+                        point.y = (vert + o)->pos.y;
+                        geometrySink.Pointer->AddLine(point);
                         geometrySink.Pointer->EndFigure(D2D1_FIGURE_END_CLOSED);
-                        figureIndCount += 3;
-
-                        ImTextureID texture = pcmd->GetTexID();
-                        }
+                    }
                     hr = geometrySink.Pointer->Close();
+                    geometrySink.Release();
                     if (FAILED(hr))
                     {
                         continue;
                     }
-                    geometrySink.Release();
-                    bd->SolidColorBrush.Pointer->SetColor(ImGui_ImplD2D_Color(color));
-                    bd->RenderTarget->SetAntialiasMode(D2D1_ANTIALIAS_MODE_ALIASED);
+
+
+                    const ImDrawVert* verts[4] = {
+                        vert + idx[idxStart],
+                        vert + idx[idxStart + 1],
+                        vert + idx[idxStart + 2],
+                        vert + idx[idxOffset - 1],
+                    };
                     bd->RenderTarget->SetAntialiasMode(D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
-#if 0 
-                    if (!isFont || (isWhite(xyFirst->uv, io.Fonts->TexUvWhitePixel) || isLine(xyFirst->uv, io.Fonts->TexUvLines))) {
-                        const ImDrawVert* verts[4] = { nullptr, nullptr, nullptr, nullptr };
-                        if (figureIndCount <= 6) {
-                            int ioffset = figureIndStart;
-                            verts[0] = vert + idx[ioffset];
-                            verts[1] = vert + idx[ioffset + 1];
-                            verts[2] = vert + idx[ioffset + 2];
-                            verts[3] = vert + idx[ioffset + figureIndCount - 1];
-                            if (verts[0]->col == verts[1]->col && verts[2]->col == verts[3]->col && verts[1]->col == verts[2]->col) {
-                                bd->SolidColorBrush->SetColor(toColor(color));
-                                RendererTarget->FillGeometry(pathGeometry, bd->SolidColorBrush);
-                            }
-                            else if (verts[0]->col == verts[3]->col || verts[1]->col == verts[2]->col) {
-                                ID2D1LinearGradientBrush* gradientBrush = nullptr;
-                                if (verts[0]->col == verts[3]->col) {
-                                    auto props = D2D1::LinearGradientBrushProperties(D2D1::Point2F(verts[0]->pos.x, verts[0]->pos.y),
-                                        D2D1::Point2F(verts[1]->pos.x, verts[1]->pos.y));
-                                    bd->GradientStops[0].position = 0;
-                                    bd->GradientStops[1].position = 1;
-                                    bd->GradientStops[0].color = toColor(verts[0]->col);
-                                    bd->GradientStops[1].color = toColor(verts[1]->col);
-                                    bd->GradientStopCollection->Release();
-                                    RendererTarget->CreateGradientStopCollection(bd->GradientStops, 2U, &bd->GradientStopCollection);
-                                    RendererTarget->CreateLinearGradientBrush(props, bd->GradientStopCollection, &gradientBrush);
 
-                                }
-                                else {
-                                    auto props = D2D1::LinearGradientBrushProperties(D2D1::Point2F(verts[1]->pos.x, verts[1]->pos.y),
-                                        D2D1::Point2F(verts[0]->pos.x, verts[0]->pos.y));
-                                    bd->GradientStops[0].position = 0;
-                                    bd->GradientStops[1].position = 1;
-                                    bd->GradientStops[0].color = toColor(verts[1]->col);
-                                    bd->GradientStops[1].color = toColor(verts[0]->col);
-                                    bd->GradientStopCollection->Release();
-                                    RendererTarget->CreateGradientStopCollection(bd->GradientStops, 2U, &bd->GradientStopCollection);
-                                    RendererTarget->CreateLinearGradientBrush(props, bd->GradientStopCollection, &gradientBrush);
-
-                                }
-                                bd->RenderTarget->SetAntialiasMode(D2D1_ANTIALIAS_MODE_ALIASED);
-                                bd->RenderTarget->FillGeometry(pathGeometry.Pointer, gradientBrush);
-                                RendererTarget->SetAntialiasMode(D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
-
-                                if (gradientBrush) {
-                                    gradientBrush->Release();
-                                    gradientBrush = nullptr;
-                                }
-                            }
+                    if (polygonColorsCount == 1) {
+                        bd->SolidColorBrush.Pointer->SetColor(ImGui_ImplD2D_Color(polygonColors[0]));
+                        bd->RenderTarget->FillGeometry(pathGeometry.Pointer, bd->SolidColorBrush.Pointer);
+                    }
+                    else if (polygonColorsCount == 2)
+                    {
+                        const ImDrawVert *verts[4] = {
+                            vert + idx[idxStart],
+                            vert + idx[idxStart + 1],
+                            vert + idx[idxStart + 2],
+                            vert + idx[idxOffset - 1],
+                        };
+                        bool success = true;
+                        if (verts[0]->col == verts[3]->col) {
+                            success = ImGui_ImplD2D_CreateBrush(linGradBrush, bd->GradientStops, stopsCol, linGradProps, bd->RenderTarget,
+                                verts[0]->pos, verts[1]->pos, verts[0]->col, verts[1]->col);
                         }
                         else {
-                            bd->SolidColorBrush->SetColor(toColor(color));
-                            RendererTarget->FillGeometry(pathGeometry, bd->SolidColorBrush);
+                            success = ImGui_ImplD2D_CreateBrush(linGradBrush, bd->GradientStops, stopsCol, linGradProps, bd->RenderTarget,
+                                verts[1]->pos, verts[2]->pos, verts[1]->col, verts[2]->col);
+                        }
+                        if (success) {
+                            bd->RenderTarget->SetAntialiasMode(D2D1_ANTIALIAS_MODE_ALIASED);
+                            bd->RenderTarget->FillGeometry(pathGeometry.Pointer, linGradBrush.Pointer);
+                            linGradBrush.Release();
+                            stopsCol.Release();
                         }
                     }
-                    else
-                    {
-#if 0 
-                        IWICImagingFactory* WicFactory = nullptr;
-                        hr = CoCreateInstance(CLSID_WICImagingFactory, NULL, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&WicFactory));
-                        unsigned char* pixels = nullptr;
-                        int width = 0, height = 0, bpp = 0;
-                        io.Fonts->GetTexDataAsRGBA32(&pixels, &width, &height, &bpp);
-
-                        ID2D1BitmapBrush* bitmapBrush = nullptr;
-                        ID2D1Bitmap* b = ImGui_ImplD2D_LoadTextureRgb32(RendererTarget, WicFactory, pixels, width, height, width * bpp, width * bpp * height);
-                        RendererTarget->CreateBitmapBrush(b, &bitmapBrush);
-                        ImVec2 pos00 = xyFirst->pos;
-                        ImVec2 pos11 = (xyFirst + 2)->pos;
-                        ImVec2 uv00 = xyFirst->uv;
-                        ImVec2 uv11 = (xyFirst + 2)->uv;
-                        ImVec2 rectCropFactor = { uv11.x - uv00.x, uv11.y - uv00.y };
-                        ImVec2 rectSize = { pos11.x - pos00.x, pos11.y - pos00.y };
-                        ImVec2 scaleFactor = { rectSize.x / (rectCropFactor.x * width), rectSize.y / (rectCropFactor.y * height) };
-
-                        D2D1::Matrix3x2F transUv = D2D1::Matrix3x2F::Translation(-uv00.x * width, -uv00.y * height);
-                        D2D1::Matrix3x2F trans = D2D1::Matrix3x2F::Translation(pos00.x, pos00.y);
-                        D2D1::Matrix3x2F scale = D2D1::Matrix3x2F::Scale(scaleFactor.x, scaleFactor.y);
-
-                        bitmapBrush->SetTransform(transUv * scale * trans);
-
-                        bd->RenderTarget->FillGeometry(pathGeometry.Pointer, bitmapBrush);
-
-                        bitmapBrush->Release();
-                        b->Release();
-                        WicFactory->Release();
-                        WicFactory = nullptr;
-#endif // 0
+                    else if (polygonColorsCount == 3) {
+                        ImVec2 middle;
+                        middle.x = 0.25 * (verts[0]->pos.x + verts[1]->pos.x + verts[2]->pos.x + verts[3]->pos.x);
+                        middle.y = 0.25 * (verts[0]->pos.y + verts[1]->pos.y + verts[2]->pos.y + verts[3]->pos.y);
+                        bd->RenderTarget->SetAntialiasMode(D2D1_ANTIALIAS_MODE_ALIASED);
+                        if (ImGui_ImplD2D_CreateBrush(radGradBrush, bd->GradientStops, stopsCol, radGradProps, bd->RenderTarget,
+                            verts[0]->pos, verts[2]->pos, verts[0]->col, verts[0]->col & 0x00FFFFFFu)) {
+                            bd->RenderTarget->FillGeometry(pathGeometry.Pointer, radGradBrush.Pointer);
+                        }
+                        if (ImGui_ImplD2D_CreateBrush(radGradBrush, bd->GradientStops, stopsCol, radGradProps, bd->RenderTarget,
+                            verts[2]->pos, verts[0]->pos, verts[2]->col, verts[2]->col & 0x00FFFFFFu)) {
+                            bd->RenderTarget->FillGeometry(pathGeometry.Pointer, radGradBrush.Pointer);
+                        }
+                        if (ImGui_ImplD2D_CreateBrush(radGradBrush, bd->GradientStops, stopsCol, radGradProps, bd->RenderTarget,
+                            verts[1]->pos, verts[3]->pos, verts[1]->col, verts[1]->col & 0x00FFFFFFu)) {
+                            bd->RenderTarget->FillGeometry(pathGeometry.Pointer, radGradBrush.Pointer);
+                        }
+                        if (polygonIndicates > 3 && ImGui_ImplD2D_CreateBrush(radGradBrush, bd->GradientStops, stopsCol, radGradProps, bd->RenderTarget,
+                            verts[3]->pos, verts[1]->pos, verts[3]->col, verts[3]->col & 0x00FFFFFFu)) {
+                            bd->RenderTarget->FillGeometry(pathGeometry.Pointer, radGradBrush.Pointer);
+                        }
+                        radGradBrush.Release();
+                        stopsCol.Release();
+                        // only triangle rendering
                     }
-#endif // 0
                     pathGeometry.Release();
                 }
                 bd->RenderTarget->PopAxisAlignedClip();
