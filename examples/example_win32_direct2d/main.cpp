@@ -65,6 +65,10 @@ int main(int, char**)
     ImGuiIO& io = ImGui::GetIO(); (void)io;
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;     // Enable Keyboard Controls
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;      // Enable Gamepad Controls
+    ImGui::GetStyle().AntiAliasedFill = false;
+    ImGui::GetStyle().AntiAliasedLines = false;
+    ImGui::GetStyle().AntiAliasedLinesUseTex = false;
+
 
     // Setup Dear ImGui style
     ImGui::StyleColorsDark();
