@@ -25,84 +25,104 @@
 #include <d2d1.h>
 #include <d2d1_3.h>
 
+/**
+ * @brief Wrapper to manage COM pointers
+ * Detach would not be used at all (really only attach detach will be used
+ */
 template <typename T>
 struct ImGui_ImplD2D_ComPtr
 {
     T* Pointer;
+    bool IsAttached;
     ImGui_ImplD2D_ComPtr() {
         memset((void*)this, 0, sizeof(*this));
     }
-    void Release() {
+
+    T* Get() const {
+        return Pointer;
+    }
+
+    T* const* GetAddressOf() const {
+        return &Pointer;
+    }
+
+    T** GetAddressOf() {
+        return &Pointer;
+    }
+
+    T* operator->() const {
+        return Pointer;
+    }
+
+    void AddRef() {
         if (Pointer) {
-            Pointer->Release();
-            Pointer = nullptr;
+            Pointer->AddRef();
+            IsAttached = true;
         }
     }
+
+    ULONG ReleaseRef() {
+        ULONG refs = 0;
+        T* tmp = Pointer;
+        if (tmp != nullptr) {
+            Pointer = nullptr;
+            refs = tmp->Release();
+        }
+        return refs;
+    }
+
+    void Release() {
+        ReleaseRef();
+    }
+
+    T *Detach() {
+        T* tmp = Pointer;
+        Pointer = nullptr;
+        IsAttached = false;
+        return tmp;
+    }
+
+    void Acquire(T* pointer) {
+        if (Pointer != pointer) {
+            ReleaseRef();
+            Pointer = pointer;
+            AddRef();
+        }
+    }
+    void Attach(T* pointer) {
+        if (Pointer != nullptr && Pointer != pointer) {
+            Pointer->Release();
+            Pointer = pointer;
+            IsAttached = true;
+        }
+    }
+
     ~ImGui_ImplD2D_ComPtr() {
         Release();
     }
 };
 
 struct ImGui_ImplD2D_Fonts {
-
+    // store texture bitmap
+    ImGui_ImplD2D_ComPtr<ID2D1Bitmap> FontBitmap;
+    // store texture bitmap brush
+    ImGui_ImplD2D_ComPtr<ID2D1BitmapBrush> FontBitmapBrush;
 };
 
-// every figure have an offset
-enum ImPolygonSides_ {
-    // default none
-    // indicates: 0
-    ImPolygonSides_None,
-    // triangle - flat, line, grad2, grad3, texture
-    // indicates: 3
-    ImPolygonSides_Three,
-    // quad - flat, line, grad2, texture, glyph
-    // indicates: 6
-    ImPolygonSides_Four,
-    // more - flat, line?
-    // parameters: ImU32 (count)
-    ImPolygonSides_Many,
+struct ImGui_ImplD2D_Images {
 };
 
-enum ImPolygonShading_ {
-    ImPolygonShading_None,
-    // line - used base texture triangle
-    // parametres: line 0-64 & color (ImU32)
-    ImPolygonShading_Line,
-    // single color
-    // parameters: ImU32
-    ImPolygonShading_Flat,
-    // gradient of 2 colors
-    // parameters: position and color A (ImVec2, ImU32)
-    // parameters: position and color B (ImVec2, ImU32)
-    ImPolygonShading_Gradient2,
-    // gradient of 3 colors
-    // parameters stored in verticles
-    // parameters: position and color A (ImVec2, ImU32)
-    // parameters: position and color B (ImVec2, ImU32)
-    // parameters: position and color C (ImVec2, ImU32)
-    ImPolygonShading_Gradient3,
-    // texture fill
-    // parameters: texture id (known for vertex)
-    // parameters: rotation (not supported now)
-    // parameters: scale
-    // compute: base point ImVec2 (on texture)
-    ImPolygonShading_Texture,
-    // font fill
-    // parameters: font id 
-    // parameters: ImWchar (glyph id)
-    // parameters: Scale (different than base)
-    ImPolygonShading_FontGlyph
-};
-
+using ImGui_ImplD2D_Factory = ID2D1Factory;
 struct ImGui_ImplD2D_Data
 {
-    ID2D1Factory* Factory;
-    ID2D1RenderTarget* RenderTarget;
+    ImGui_ImplD2D_ComPtr<ImGui_ImplD2D_Factory> Factory;
+    ImGui_ImplD2D_ComPtr<ImGui_ImplD2D_RenderTarget> RenderTarget;
+    ImGui_ImplD2D_ComPtr<ImGui_ImplD2D_WriteFactory> WriteFactory;
+    ImGui_ImplD2D_ComPtr<IWICImagingFactory> ImagingFactory;
     ImGui_ImplD2D_Fonts* Fonts;
     ImGui_ImplD2D_ComPtr<ID2D1SolidColorBrush> SolidColorBrush;
     ImGui_ImplD2D_ComPtr<ID2D1StrokeStyle> StrokeStyle;
     D2D1_GRADIENT_STOP GradientStops[2];
-    IDWriteFactory5* WriteFactory;
     ImGui_ImplD2D_Data() { memset((void*)this, 0, sizeof(*this)); }
 };
 
@@ -127,7 +147,8 @@ bool     ImGui_ImplD2D_Init(ID2D1RenderTarget* rendererTarget, IDWriteFactory* w
     bd->GradientStops[1U].position = 1.f;
     HRESULT hr = S_OK;
     bool success = SUCCEEDED(hr);
-    rendererTarget->GetFactory(&bd->Factory);
+    bd->Factory.IsAttached = false;
+    rendererTarget->GetFactory(bd->Factory.GetAddressOf());
     if (success) {
         success = ImGui_ImplD2D_CreateDeviceObjects(rendererTarget);
     }
@@ -160,20 +181,24 @@ bool     ImGui_ImplD2D_Init(ID2D1RenderTarget* rendererTarget, IDWriteFactory* w
 bool ImGui_ImplD2D_CreateDeviceObjects(ID2D1RenderTarget* renderTarget) {
     ImGui_ImplD2D_Data* bd = ImGui_ImplD2D_GetBackendData();
     if (renderTarget == nullptr) {
-        renderTarget = bd->RenderTarget;
+        renderTarget = bd->RenderTarget.Pointer;
     }
     IM_ASSERT(renderTarget != nullptr && "Render target must be initialized");
 
     HRESULT hr = S_OK;
-    if (renderTarget != bd->RenderTarget) {
+    if (renderTarget != bd->RenderTarget.Pointer) {
         ImGui_ImplD2D_DestroyDeviceObjects();
-        bd->RenderTarget = renderTarget;
+        bd->RenderTarget.Release();
+        bd->RenderTarget.Acquire(renderTarget);
         // those this increase reference count?
-        renderTarget->GetFactory(&bd->Factory);
+        bd->Factory.Release();
+        bd->Factory.IsAttached = false;
+        renderTarget->GetFactory(bd->Factory.GetAddressOf());
         if (FAILED(hr)) {
             return false;
         }
-        hr = renderTarget->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::Black), &bd->SolidColorBrush.Pointer);
+        bd->SolidColorBrush.Release();
+        hr = renderTarget->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::Black), bd->SolidColorBrush.GetAddressOf());
         if (FAILED(hr)) {
             return false;
         }
@@ -224,6 +249,7 @@ void     ImGui_ImplD2D_NewFrame() {
     ImGui_ImplD2D_Data* bd = ImGui_ImplD2D_GetBackendData();
     IM_ASSERT(bd != nullptr && "Did you call ImGui_ImplD2D_Init()?");
     // auto detect new fonts if required
+
     ImGui_ImplD2D_CreateFontsTexture();
 }
 static float ImGui_Impl2D2_ColorMap[256] = {
@@ -621,7 +647,7 @@ static int ImGui_ImplD2D_IsGlyph(ID2D1RenderTarget* RendererTarget, ImGui_ImplD2
             hr = bd->WriteFactory->CreateInMemoryFontFileLoader(&fontLoader);
             hr = bd->WriteFactory->RegisterFontFileLoader(fontLoader);
             auto configData = io.Fonts->Fonts.Data[0]->ConfigData;
-            fontLoader->CreateInMemoryFontFileReference(bd->WriteFactory, configData->FontData, configData->FontDataSize, NULL, &fontFile);
+            fontLoader->CreateInMemoryFontFileReference(bd->WriteFactory.Get(), configData->FontData, configData->FontDataSize, NULL, &fontFile);
             hr = bd->WriteFactory->CreateFontFaceReference(fontFile, 0, DWRITE_FONT_SIMULATIONS_NONE, &fontFace);
             hr = bd->WriteFactory->CreateFontSetBuilder(&fontBuilder);
 
@@ -669,12 +695,11 @@ static int ImGui_ImplD2D_IsGlyph(ID2D1RenderTarget* RendererTarget, ImGui_ImplD2
 
 #endif // 1
 
-
-
 inline static ImVec2 from(ImVec2 a, ImVec2 b, ImVec2 c, float u, float v, float w) {
     return ImVec2(u * a.x + v * b.x + w * c.x, u * a.y + v * b.y + w * c.y);
 
 }
+
 static inline ImVec2 ret(ImVec2 a0, ImVec2 a1, ImVec2 b) {
     // first convert line to normalized unit vector
     auto dx = a1.x - a0.x;
@@ -707,8 +732,6 @@ static bool isLine(const ImVec2& uv, ImVec4* texUvLines, int count = IM_DRAWLIST
     }
     return false;
 }
-
-
 
 void     ImGui_ImplD2D_RenderDrawData(ImDrawData* draw_data) {
     ImGuiIO& io = ImGui::GetIO();
@@ -810,7 +833,7 @@ void     ImGui_ImplD2D_RenderDrawData(ImDrawData* draw_data) {
                                 nextPolygonColorsCount++;
                             }
                         }
-                            
+
                         // only triangles & quads can be renderer with more than one color
                         if (polygonIndicates > 6 && nextPolygonColorsCount > 1) {
                             break;
@@ -867,8 +890,6 @@ void     ImGui_ImplD2D_RenderDrawData(ImDrawData* draw_data) {
                     {
                         continue;
                     }
-
-
                     const ImDrawVert* verts[4] = {
                         vert + idx[idxStart],
                         vert + idx[idxStart + 1],
@@ -883,7 +904,7 @@ void     ImGui_ImplD2D_RenderDrawData(ImDrawData* draw_data) {
                     }
                     else if (polygonColorsCount == 2)
                     {
-                        const ImDrawVert *verts[4] = {
+                        const ImDrawVert* verts[4] = {
                             vert + idx[idxStart],
                             vert + idx[idxStart + 1],
                             vert + idx[idxStart + 2],
@@ -891,11 +912,11 @@ void     ImGui_ImplD2D_RenderDrawData(ImDrawData* draw_data) {
                         };
                         bool success = true;
                         if (verts[0]->col == verts[3]->col) {
-                            success = ImGui_ImplD2D_CreateBrush(linGradBrush, bd->GradientStops, stopsCol, linGradProps, bd->RenderTarget,
+                            success = ImGui_ImplD2D_CreateBrush(linGradBrush, bd->GradientStops, stopsCol, linGradProps, bd->RenderTarget.Get(),
                                 verts[0]->pos, verts[1]->pos, verts[0]->col, verts[1]->col);
                         }
                         else {
-                            success = ImGui_ImplD2D_CreateBrush(linGradBrush, bd->GradientStops, stopsCol, linGradProps, bd->RenderTarget,
+                            success = ImGui_ImplD2D_CreateBrush(linGradBrush, bd->GradientStops, stopsCol, linGradProps, bd->RenderTarget.Get(),
                                 verts[1]->pos, verts[2]->pos, verts[1]->col, verts[2]->col);
                         }
                         if (success) {
@@ -910,19 +931,19 @@ void     ImGui_ImplD2D_RenderDrawData(ImDrawData* draw_data) {
                         middle.x = 0.25 * (verts[0]->pos.x + verts[1]->pos.x + verts[2]->pos.x + verts[3]->pos.x);
                         middle.y = 0.25 * (verts[0]->pos.y + verts[1]->pos.y + verts[2]->pos.y + verts[3]->pos.y);
                         bd->RenderTarget->SetAntialiasMode(D2D1_ANTIALIAS_MODE_ALIASED);
-                        if (ImGui_ImplD2D_CreateBrush(radGradBrush, bd->GradientStops, stopsCol, radGradProps, bd->RenderTarget,
+                        if (ImGui_ImplD2D_CreateBrush(radGradBrush, bd->GradientStops, stopsCol, radGradProps, bd->RenderTarget.Get(),
                             verts[0]->pos, verts[2]->pos, verts[0]->col, verts[0]->col & 0x00FFFFFFu)) {
                             bd->RenderTarget->FillGeometry(pathGeometry.Pointer, radGradBrush.Pointer);
                         }
-                        if (ImGui_ImplD2D_CreateBrush(radGradBrush, bd->GradientStops, stopsCol, radGradProps, bd->RenderTarget,
+                        if (ImGui_ImplD2D_CreateBrush(radGradBrush, bd->GradientStops, stopsCol, radGradProps, bd->RenderTarget.Get(),
                             verts[2]->pos, verts[0]->pos, verts[2]->col, verts[2]->col & 0x00FFFFFFu)) {
                             bd->RenderTarget->FillGeometry(pathGeometry.Pointer, radGradBrush.Pointer);
                         }
-                        if (ImGui_ImplD2D_CreateBrush(radGradBrush, bd->GradientStops, stopsCol, radGradProps, bd->RenderTarget,
+                        if (ImGui_ImplD2D_CreateBrush(radGradBrush, bd->GradientStops, stopsCol, radGradProps, bd->RenderTarget.Get(),
                             verts[1]->pos, verts[3]->pos, verts[1]->col, verts[1]->col & 0x00FFFFFFu)) {
                             bd->RenderTarget->FillGeometry(pathGeometry.Pointer, radGradBrush.Pointer);
                         }
-                        if (polygonIndicates > 3 && ImGui_ImplD2D_CreateBrush(radGradBrush, bd->GradientStops, stopsCol, radGradProps, bd->RenderTarget,
+                        if (polygonIndicates > 3 && ImGui_ImplD2D_CreateBrush(radGradBrush, bd->GradientStops, stopsCol, radGradProps, bd->RenderTarget.Get(),
                             verts[3]->pos, verts[1]->pos, verts[3]->col, verts[3]->col & 0x00FFFFFFu)) {
                             bd->RenderTarget->FillGeometry(pathGeometry.Pointer, radGradBrush.Pointer);
                         }
@@ -940,4 +961,89 @@ void     ImGui_ImplD2D_RenderDrawData(ImDrawData* draw_data) {
 }
 
 #endif
+#if 0
+ID2D1Bitmap* ImGui_Impl2D2_CreateTexture(ID2D1RenderTarget* renderTarget, IWICImagingFactory* WICFactory, IWICBitmapSource* source) {
+    ComPtr<IWICFormatConverter> pConverter = nullptr;
+    HRESULT hr = S_OK;
+    if (SUCCEEDED(hr))
+    {
+        // Convert the image format to 32bppPBGRA
+        // (DXGI_FORMAT_B8G8R8A8_UNORM + D2D1_ALPHA_MODE_PREMULTIPLIED).
+        hr = WICFactory->CreateFormatConverter(pConverter.GetAddressOf());
+    }
+    // TODO: it seems that is better option WICConvertBitmapSource
+    if (SUCCEEDED(hr))
+    {
+        hr = pConverter->Initialize(
+            source,
+            GUID_WICPixelFormat32bppPBGRA,
+            WICBitmapDitherTypeNone,
+            NULL,
+            0.f,
+            WICBitmapPaletteTypeMedianCut
+        );
+    }
+    ID2D1Bitmap* texture = nullptr;
+    if (SUCCEEDED(hr))
+    {
+        //create a Direct2D bitmap from the WIC bitmap.
+        hr = renderTarget->CreateBitmapFromWicBitmap(
+            pConverter.Get(),
+            NULL,
+            &texture
+        );
+    }
+    return texture;
+}
+static ID2D1Bitmap* ImGui_ImplD2D_CreateTexture(ID2D1RenderTarget* renderTarget, IWICImagingFactory* WICFactory, IWICBitmapDecoder* decoder);
+
+static ID2D1Bitmap* ImGui_ImplD2D_CreateTexture(ID2D1RenderTarget* renderTarget, IWICImagingFactory* WICFactory, IWICBitmapDecoder* decoder) {
+    ImGui_ImplD2D_ComPtr<IWICBitmapFrameDecode> pSource;
+    HRESULT hr = decoder->GetFrame(0, &pSource.Pointer);
+    if (FAILED(hr)) {
+        return nullptr;
+    }
+    return ImGui_Impl2D2_CreateTexture(renderTarget, WICFactory, pSource.Pointer);
+}
+ID2D1Bitmap* ImGui_ImplD2D_LoadTextureRgb32(ID2D1RenderTarget* renderTarget, IWICImagingFactory* WICFactory, const void* image, int width, int height, int stride, size_t size)
+{
+    using Microsoft::WRL::ComPtr;
+    ComPtr<IWICBitmap> raw = nullptr;
+    HRESULT hr = S_OK;
+    hr = WICFactory->CreateBitmapFromMemory(width, height, GUID_WICPixelFormat32bppRGBA, stride, size, (BYTE*)image, &raw);
+    return ImGui_Impl2D2_CreateTexture(renderTarget, WICFactory, raw.Get());
+}
+ID2D1Bitmap* ImGui_ImplD2D_LoadTexture(ID2D1RenderTarget* renderTarget, IWICImagingFactory* WICFactory, const void* image, size_t size) {
+    using Microsoft::WRL::ComPtr;
+
+    ComPtr<IWICBitmapDecoder> pDecoder = nullptr;
+    ComPtr<IWICStream> pStream = nullptr;
+    HRESULT hr = S_OK;
+    if (SUCCEEDED(hr))
+    {
+        // Create a WIC stream to map onto the memory.
+        hr = WICFactory->CreateStream(pStream.GetAddressOf());
+    }
+    if (SUCCEEDED(hr))
+    {
+        // Initialize the stream with the memory pointer and size.
+        hr = pStream->InitializeFromMemory(
+            (WICInProcPointer)image,
+            size
+        );
+    }
+    if (SUCCEEDED(hr))
+    {
+        // Create a decoder for the stream.
+        hr = WICFactory->CreateDecoderFromStream(
+            pStream.Get(),
+            NULL,
+            WICDecodeMetadataCacheOnLoad,
+            &pDecoder
+        );
+    }
+    return ImGui_ImplD2D_CreateTexture(renderTarget, WICFactory, pDecoder.Get());
+}
+
+#endif // 0
 

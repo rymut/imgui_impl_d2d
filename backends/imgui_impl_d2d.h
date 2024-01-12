@@ -23,8 +23,12 @@
 
 struct ID2D1RenderTarget;
 struct IDWriteFactory;
+struct IDWriteFactory5;
 
-IMGUI_IMPL_API bool     ImGui_ImplD2D_Init(ID2D1RenderTarget* renderTarget, IDWriteFactory *writeFactory);
+using ImGui_ImplD2D_RenderTarget = ID2D1RenderTarget;
+using ImGui_ImplD2D_WriteFactory = IDWriteFactory5;
+
+IMGUI_IMPL_API bool     ImGui_ImplD2D_Init(ImGui_ImplD2D_RenderTarget* renderTarget, IDWriteFactory *writeFactory);
 IMGUI_IMPL_API void     ImGui_ImplD2D_Shutdown();
 IMGUI_IMPL_API void     ImGui_ImplD2D_NewFrame();
 IMGUI_IMPL_API void     ImGui_ImplD2D_RenderDrawData(ImDrawData* draw_data);
@@ -36,6 +40,6 @@ IMGUI_IMPL_API bool		ImGui_ImplD2D_FontBuilder_Build(ImFontAtlas* atlas);
 IMGUI_IMPL_API bool     ImGui_ImplD2D_CreateFontsTexture();
 IMGUI_IMPL_API void     ImGui_ImplD2D_DestroyFontsTexture();
 IMGUI_IMPL_API void     ImGui_ImplD2D_DestroyDeviceObjects();
-IMGUI_IMPL_API bool     ImGui_ImplD2D_CreateDeviceObjects(ID2D1RenderTarget* renderTarget);
+IMGUI_IMPL_API bool     ImGui_ImplD2D_CreateDeviceObjects(ImGui_ImplD2D_RenderTarget* renderTarget);
 
 #endif // #ifndef IMGUI_DISABLE
