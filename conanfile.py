@@ -5,7 +5,7 @@ from conan.tools.scm import Git
 import re
 import os
 
-class ImGuiImplD2D(ConanFile):
+class ImGuiImplD2DConan(ConanFile):
     name = "ImGuiImplD2D"
     description = "ImGUI Direct2D backend"
     license = "MIT"

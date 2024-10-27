@@ -33,11 +33,16 @@ IMGUI_IMPL_API void     ImGui_ImplD2D_Shutdown();
 IMGUI_IMPL_API void     ImGui_ImplD2D_NewFrame();
 IMGUI_IMPL_API void     ImGui_ImplD2D_RenderDrawData(ImDrawData* draw_data);
 
-// Used when font renderer is being used for rendering fonts using direct write5 interface
+/** @brief Fonut builder using Direct2D
+
+    Used when font renderer is being used for rendering fonts using direct write5 interface
+ */
 IMGUI_IMPL_API bool		ImGui_ImplD2D_FontBuilder_Build(ImFontAtlas* atlas);
 
 // Called by Init/NewFrame/Shutdown
 IMGUI_IMPL_API bool     ImGui_ImplD2D_CreateFontsTexture();
+/** @brief Destroy texture fonts assets
+ */
 IMGUI_IMPL_API void     ImGui_ImplD2D_DestroyFontsTexture();
 IMGUI_IMPL_API void     ImGui_ImplD2D_DestroyDeviceObjects();
 IMGUI_IMPL_API bool     ImGui_ImplD2D_CreateDeviceObjects(ImGui_ImplD2D_RenderTarget* renderTarget);

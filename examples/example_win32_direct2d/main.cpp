@@ -200,7 +200,6 @@ bool CreateDeviceResources(HWND hWnd)
     D2D1_SIZE_U size = D2D1::SizeU(rc.right - rc.left, rc.bottom - rc.top);
     D2D1_RENDER_TARGET_PROPERTIES props = D2D1::RenderTargetProperties();
     props.type = D2D1_RENDER_TARGET_TYPE_HARDWARE;
-
     HRESULT hr = g_pD2DFactory->CreateHwndRenderTarget(props, D2D1::HwndRenderTargetProperties(hWnd, size), &g_pMainRT);
     if (SUCCEEDED(hr)) {
         hr = g_pWICFactory->CreateBitmap(size.width, size.height, GUID_WICPixelFormat32bppPRGBA, WICBitmapCacheOnLoad, g_pWICBitmap.GetAddressOf());
