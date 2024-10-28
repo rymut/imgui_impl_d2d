@@ -639,10 +639,10 @@ static int ImGui_ImplD2D_IsGlyph(ID2D1RenderTarget* RendererTarget,
     codepointPos.reserve(255);
     // get glyphs metadata
     const auto& fontData = io.Fonts->Fonts.Data[font];
-    auto fontGlyphs = io.Fonts->Fonts.Data[font]->Glyphs;
+    auto fontGlyphs = fontData->Glyphs;
     auto fontScale = io.FontGlobalScale * fontData->Scale;
-    auto fontSize = io.Fonts->Fonts.Data[font]->FontSize * fontScale;
-    const auto top = (io.Fonts->Fonts.Data[font]->FontSize - fontData->Ascent) * fontScale;
+    auto fontSize = fontData->FontSize * fontScale;
+    const auto top = (fontData->FontSize - fontData->Ascent) * fontScale;
     // Each letter is rendered as two polygons (4 vecticles/6 indicates)
     constexpr int countPerLetter = 6;
     for (int i = offset, c = 0; i < pcmd->ElemCount && c < fontGlyphs.size(); i += countPerLetter) {
@@ -653,7 +653,8 @@ static int ImGui_ImplD2D_IsGlyph(ID2D1RenderTarget* RendererTarget,
             if (uv.x == glyph.U0 && uv.y == glyph.V0 ||
                 uv.x == glyph.U1 && uv.y == glyph.V1) {
                 glyphRun.push_back(c);
-                ImVec2 pos = { v->pos.x - glyph.X0 * fontScale, v->pos.y - glyph.Y0 * fontScale + top };
+                float dist = (glyph.X1 - glyph.X0);
+                ImVec2 pos = { v->pos.x - glyph.X0 * fontScale , v->pos.y - glyph.Y0 * fontScale + top};
                 codepointPos.push_back(pos);
 
                 codepointRun.push_back(fontGlyphs[c].Codepoint);
@@ -676,9 +677,11 @@ static int ImGui_ImplD2D_IsGlyph(ID2D1RenderTarget* RendererTarget,
         static IDWriteFontSet* fontSet = NULL;
         static IDWriteFontCollection1* fontCollection = NULL;
         hresult = bd->WriteFactory->CreateInMemoryFontFileLoader(&fontLoader);
-        if (fontLoader == NULL) {
+        if (fontLoader) {
             auto configData = io.Fonts->Fonts.Data[0]->ConfigData;
-            fontLoader->CreateInMemoryFontFileReference(bd->WriteFactory.Get(), configData->FontData, configData->FontDataSize, NULL, &fontFile);
+            auto fontDataScale = io.FontGlobalScale* io.Fonts->Fonts.Data[0]->Scale;
+            hresult = bd->WriteFactory->RegisterFontFileLoader(fontLoader);
+            hresult = fontLoader->CreateInMemoryFontFileReference(bd->WriteFactory.Get(), configData->FontData, configData->FontDataSize, NULL, &fontFile);
             if (fontFile != NULL) {
                 hresult = bd->WriteFactory->CreateFontFaceReference(fontFile, 0, DWRITE_FONT_SIMULATIONS_NONE, &fontFace);
             }
@@ -718,6 +721,7 @@ static int ImGui_ImplD2D_IsGlyph(ID2D1RenderTarget* RendererTarget,
 
             for (size_t c = 0; c < codepointRun.size() - 1; c++) {
                 ImVec2 pos = codepointPos[c];
+                const auto& glyph = fontGlyphs[glyphRun[c]];
                 D2D1_RECT_F rect = D2D1::RectF(pos.x, pos.y, renderTargetSize.width, renderTargetSize.height);
 #if defined(UNICODE)
                 bd->RenderTarget->DrawText(codepointRun.data() + c, 1, textFormat, rect, bd->SolidColorBrush.Get());
@@ -844,15 +848,9 @@ void     ImGui_ImplD2D_RenderDrawData(ImDrawData* draw_data) {
                 int idxOffset = 0;
                 pathGeometry.Release();
                 geometrySink.Release();
+                int prev = idxOffset;
                 while (idxOffset < indCount) {
-                    int skip = ImGui_ImplD2D_IsGlyph(backendData->RenderTarget.Get(), backendData, io, pcmd, vert, idx, idxOffset);
-                    if (skip > 0) {
-                        // print stream
-
-                        idxOffset += skip - 3;
-                        continue;
-                    }
-
+                    prev = idxOffset;
                     int polygonIndicates = 0;
                     int polygonColorsCount = 1;
                     ImDrawIdx prevIdx[3] = { idx[idxOffset + 0], idx[idxOffset + 1], idx[idxOffset + 2] };
@@ -950,7 +948,13 @@ void     ImGui_ImplD2D_RenderDrawData(ImDrawData* draw_data) {
 
                     if (polygonColorsCount == 1) {
                         backendData->SolidColorBrush.Pointer->SetColor(ImGui_ImplD2D_Color(polygonColors[0]));
-                        backendData->RenderTarget->FillGeometry(pathGeometry.Pointer, backendData->SolidColorBrush.Pointer);
+                        int skip = ImGui_ImplD2D_IsGlyph(backendData->RenderTarget.Get(), backendData, io, pcmd, vert, idx, prev);
+                        if (skip == 0) {
+                            backendData->RenderTarget->FillGeometry(pathGeometry.Pointer, backendData->SolidColorBrush.Pointer);
+                        }
+                        else {
+                            idxOffset = prev + skip;
+                        }
                     }
                     else if (polygonColorsCount == 2)
                     {
@@ -1002,6 +1006,9 @@ void     ImGui_ImplD2D_RenderDrawData(ImDrawData* draw_data) {
                         // only triangle rendering
                     }
                     pathGeometry.Release();
+
+
+
                 }
                 backendData->RenderTarget->PopAxisAlignedClip();
             }
@@ -1091,9 +1098,9 @@ ID2D1Bitmap* ImGui_ImplD2D_LoadTexture(ID2D1RenderTarget* renderTarget, IWICImag
             WICDecodeMetadataCacheOnLoad,
             &pDecoder
         );
-            }
+    }
     return ImGui_ImplD2D_CreateTexture(renderTarget, WICFactory, pDecoder.Get());
-        }
+                }
 
 #endif // 0
 

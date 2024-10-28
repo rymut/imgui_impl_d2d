@@ -38,6 +38,9 @@ static UINT                     g_ResizeWidth = 0, g_ResizeHeight = 0;
 
 LRESULT WINAPI WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
+/** @brief Scale for debugging */
+constexpr int scale = 1;
+
 // Main code
 int main(int, char**)
 {
@@ -63,6 +66,9 @@ int main(int, char**)
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO(); (void)io;
+    ImGui::GetStyle().ScaleAllSizes(scale);
+    io.FontGlobalScale = scale;
+
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;     // Enable Keyboard Controls
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;      // Enable Gamepad Controls
     ImGui::GetStyle().AntiAliasedFill = false;
