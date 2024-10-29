@@ -123,18 +123,37 @@ struct ImGui_ImplD2D_Fonts {
     ImGui_ImplD2D_ComPtr<ID2D1Bitmap> FontBitmap;
     // store texture bitmap brush
     ImGui_ImplD2D_ComPtr<ID2D1BitmapBrush> FontBitmapBrush;
+    struct {
+        IDWriteFontFaceReference* FontFace;
+        IDWriteFontFile* FontFile;
+
+    } Data;
+    /** @brief Store font collection object */
+    IDWriteFontCollection1* FontCollection;
+    /** @brief In memory font loader */
+    IDWriteInMemoryFontFileLoader* FontInMemoryLoader;
+    /** @brief Stores all fonts with set */
+    IDWriteFontSetBuilder* FontSetBuilder;
+    /** @brief Currently created font set used by FontCollection */
+    IDWriteFontSet* FontSet;
 };
 
 struct ImGui_ImplD2D_Images {
 };
 
 using ImGui_ImplD2D_Factory = ID2D1Factory;
+
 struct ImGui_ImplD2D_Data
 {
     ImGui_ImplD2D_ComPtr<ImGui_ImplD2D_Factory> Factory;
+    /** @brief Render target */
     ImGui_ImplD2D_ComPtr<ImGui_ImplD2D_RenderTarget> RenderTarget;
+    /** @brief Text renderer factory */
     ImGui_ImplD2D_ComPtr<ImGui_ImplD2D_WriteFactory> WriteFactory;
+    /** @brief Images Factory */
     ImGui_ImplD2D_ComPtr<IWICImagingFactory> ImagingFactory;
+
+
     ImGui_ImplD2D_Fonts* Fonts;
     ImGui_ImplD2D_ComPtr<ID2D1SolidColorBrush> SolidColorBrush;
     ImGui_ImplD2D_ComPtr<ID2D1StrokeStyle> StrokeStyle;
@@ -155,6 +174,7 @@ bool     ImGui_ImplD2D_Init(ID2D1RenderTarget* rendererTarget, IDWriteFactory* w
 
     // Setup backend capabilities flags
     ImGui_ImplD2D_Data* bd = IM_NEW(ImGui_ImplD2D_Data)();
+    bd->Fonts = IM_NEW(ImGui_ImplD2D_Fonts)();
     io.BackendRendererUserData = (void*)bd;
     io.BackendRendererName = "imgui_impl_d2d";
     io.BackendFlags |= ImGuiBackendFlags_RendererHasVtxOffset;  // We can honor the ImDrawCmd::VtxOffset field, allowing for large meshes.
@@ -596,8 +616,8 @@ static bool ImGui_ImplD2D_CreateBrush(
     @returns
         This function returns number of indicates to skip for it to be rendered
 */
-static int ImGui_ImplD2D_IsGlyph(ID2D1RenderTarget* RendererTarget,
-    ImGui_ImplD2D_Data* bd, const ImGuiIO& io,
+static int ImGui_ImplD2D_IsGlyph(ID2D1RenderTarget* renderTarget,
+    ImGui_ImplD2D_Data* backendData, const ImGuiIO& io,
     const ImDrawCmd* pcmd,
     const ImDrawVert* vert,
     const ImDrawIdx* idx,
@@ -654,7 +674,7 @@ static int ImGui_ImplD2D_IsGlyph(ID2D1RenderTarget* RendererTarget,
                 uv.x == glyph.U1 && uv.y == glyph.V1) {
                 glyphRun.push_back(c);
                 float dist = (glyph.X1 - glyph.X0);
-                ImVec2 pos = { v->pos.x - glyph.X0 * fontScale , v->pos.y - glyph.Y0 * fontScale + top};
+                ImVec2 pos = { v->pos.x - glyph.X0 * fontScale , v->pos.y - glyph.Y0 * fontScale + top };
                 codepointPos.push_back(pos);
 
                 codepointRun.push_back(fontGlyphs[c].Codepoint);
@@ -668,46 +688,52 @@ static int ImGui_ImplD2D_IsGlyph(ID2D1RenderTarget* RendererTarget,
         codepointRun.push_back(0);
         codeRun.push_back(0);
         //std::wcerr << codepointRun.data() << std::endl << std::flush;
-        static HRESULT hresult = S_OK;
-        static IDWriteTextFormat* textFormat = NULL;
-        static IDWriteInMemoryFontFileLoader* fontLoader = NULL;
-        static IDWriteFontFile* fontFile = NULL;
-        static IDWriteFontFaceReference* fontFace = NULL;
-        static IDWriteFontSetBuilder* fontBuilder = NULL;
-        static IDWriteFontSet* fontSet = NULL;
-        static IDWriteFontCollection1* fontCollection = NULL;
-        hresult = bd->WriteFactory->CreateInMemoryFontFileLoader(&fontLoader);
+        HRESULT hresult = S_OK;
+        IDWriteTextFormat* textFormat = NULL;
+        // create for backend data
+        if (backendData->Fonts->FontInMemoryLoader == NULL) {
+            hresult = backendData->WriteFactory->CreateInMemoryFontFileLoader(&backendData->Fonts->FontInMemoryLoader);
+            if (hresult == S_OK) {
+                hresult = backendData->WriteFactory->RegisterFontFileLoader(backendData->Fonts->FontInMemoryLoader);
+            }
+        }
+        if (backendData->Fonts->FontSetBuilder == NULL) {
+            hresult = backendData->WriteFactory->CreateFontSetBuilder(&backendData->Fonts->FontSetBuilder);
+        }
+        IDWriteInMemoryFontFileLoader* fontLoader = backendData->Fonts->FontInMemoryLoader;
         if (fontLoader) {
             auto configData = io.Fonts->Fonts.Data[0]->ConfigData;
-            auto fontDataScale = io.FontGlobalScale* io.Fonts->Fonts.Data[0]->Scale;
-            hresult = bd->WriteFactory->RegisterFontFileLoader(fontLoader);
-            hresult = fontLoader->CreateInMemoryFontFileReference(bd->WriteFactory.Get(), configData->FontData, configData->FontDataSize, NULL, &fontFile);
-            if (fontFile != NULL) {
-                hresult = bd->WriteFactory->CreateFontFaceReference(fontFile, 0, DWRITE_FONT_SIMULATIONS_NONE, &fontFace);
+            auto fontDataScale = io.FontGlobalScale * io.Fonts->Fonts.Data[0]->Scale;
+            if (backendData->Fonts->Data.FontFile == NULL) {
+                hresult = backendData->Fonts->FontInMemoryLoader->
+                    CreateInMemoryFontFileReference(backendData->WriteFactory.Get(), configData->FontData, configData->FontDataSize, NULL, &backendData->Fonts->Data.FontFile);
             }
-            if (fontFace == NULL) {
+            if (backendData->Fonts->Data.FontFile && backendData->Fonts->Data.FontFace == NULL) {
+                hresult = backendData->WriteFactory->CreateFontFaceReference(backendData->Fonts->Data.FontFile, 0, DWRITE_FONT_SIMULATIONS_NONE, &backendData->Fonts->Data.FontFace);
+                DWRITE_FONT_PROPERTY props[] =
+                {
+                    // We're only using names to reference fonts programmatically, so won't worry about localized names.
+                    { DWRITE_FONT_PROPERTY_ID_FAMILY_NAME, L"Arial", L"en-US"},
+                    { DWRITE_FONT_PROPERTY_ID_FULL_NAME, L"Arial", L"en-US"},
+                    { DWRITE_FONT_PROPERTY_ID_WEIGHT, L"400", nullptr}
+                };
+                if (backendData->Fonts->Data.FontFace) {
+                    hresult = backendData->Fonts->FontSetBuilder->AddFontFaceReference(backendData->Fonts->Data.FontFace, props, ARRAYSIZE(props));
+                    backendData->Fonts->FontSetBuilder->CreateFontSet(&backendData->Fonts->FontSet);
+                }
+                hresult = backendData->WriteFactory->CreateFontCollectionFromFontSet(backendData->Fonts->FontSet, &backendData->Fonts->FontCollection);
+            }
+
+            if (backendData->Fonts->Data.FontFace == NULL) {
                 // cannot continue
 
             }
-            hresult = bd->WriteFactory->CreateFontSetBuilder(&fontBuilder);
-            if (fontBuilder == NULL) {
-                // cannot continue
-            }
 
-            DWRITE_FONT_PROPERTY props[] =
-            {
-                // We're only using names to reference fonts programmatically, so won't worry about localized names.
-                { DWRITE_FONT_PROPERTY_ID_FAMILY_NAME, L"Arial", L"en-US"},
-                { DWRITE_FONT_PROPERTY_ID_FULL_NAME, L"Arial", L"en-US"},
-                { DWRITE_FONT_PROPERTY_ID_WEIGHT, L"400", nullptr}
-            };
-            hresult = fontBuilder->AddFontFaceReference(fontFace, props, ARRAYSIZE(props));
-            fontBuilder->CreateFontSet(&fontSet);
-            hresult = bd->WriteFactory->CreateFontCollectionFromFontSet(fontSet, &fontCollection);
+
         }
         if (textFormat == NULL) {
 
-            hresult = bd->WriteFactory->CreateTextFormat(L"Arial", fontCollection, DWRITE_FONT_WEIGHT_NORMAL,
+            hresult = backendData->WriteFactory->CreateTextFormat(L"Arial", backendData->Fonts->FontCollection, DWRITE_FONT_WEIGHT_NORMAL,
                 DWRITE_FONT_STYLE_NORMAL,
                 DWRITE_FONT_STRETCH_NORMAL,
                 fontSize,
@@ -715,9 +741,9 @@ static int ImGui_ImplD2D_IsGlyph(ID2D1RenderTarget* RendererTarget,
                 &textFormat);
         }
         if (SUCCEEDED(hresult)) {
-            const D2D1_SIZE_U renderTargetSize = RendererTarget->GetPixelSize();
-            bd->SolidColorBrush.Pointer->SetColor(ImGui_ImplD2D_Color(v0->col));
-            bd->RenderTarget->SetTransform(D2D1::Matrix3x2F::Identity());
+            const D2D1_SIZE_U renderTargetSize = renderTarget->GetPixelSize();
+            backendData->SolidColorBrush.Pointer->SetColor(ImGui_ImplD2D_Color(v0->col));
+            backendData->RenderTarget->SetTransform(D2D1::Matrix3x2F::Identity());
 
             for (size_t c = 0; c < codepointRun.size() - 1; c++) {
                 ImVec2 pos = codepointPos[c];
@@ -726,7 +752,7 @@ static int ImGui_ImplD2D_IsGlyph(ID2D1RenderTarget* RendererTarget,
 #if defined(UNICODE)
                 bd->RenderTarget->DrawText(codepointRun.data() + c, 1, textFormat, rect, bd->SolidColorBrush.Get());
 #else
-                bd->RenderTarget->DrawTextA(codepointRun.data() + c, 1, textFormat, &rect, bd->SolidColorBrush.Get());
+                backendData->RenderTarget->DrawTextA(codepointRun.data() + c, 1, textFormat, &rect, backendData->SolidColorBrush.Get());
 #endif
 
             }
@@ -1100,7 +1126,7 @@ ID2D1Bitmap* ImGui_ImplD2D_LoadTexture(ID2D1RenderTarget* renderTarget, IWICImag
         );
     }
     return ImGui_ImplD2D_CreateTexture(renderTarget, WICFactory, pDecoder.Get());
-                }
+}
 
 #endif // 0
 
