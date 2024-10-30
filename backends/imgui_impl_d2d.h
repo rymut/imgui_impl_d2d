@@ -47,4 +47,7 @@ IMGUI_IMPL_API void     ImGui_ImplD2D_DestroyFontsTexture();
 IMGUI_IMPL_API void     ImGui_ImplD2D_DestroyDeviceObjects();
 IMGUI_IMPL_API bool     ImGui_ImplD2D_CreateDeviceObjects(ImGui_ImplD2D_RenderTarget* renderTarget);
 
+/** @brief Utility for loading textures
+ */
+
 #endif // #ifndef IMGUI_DISABLE

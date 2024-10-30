@@ -40,7 +40,7 @@ LRESULT WINAPI WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
 /** @brief Scale for debugging */
 constexpr int scale = 1;
-
+#include <stdio.h>
 // Main code
 int main(int, char**)
 {
@@ -144,6 +144,7 @@ int main(int, char**)
 
             ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / io.Framerate, io.Framerate);
             ImGui::End();
+            printf("%f\n", io.Framerate);
         }
 
         // 3. Show another simple window.
